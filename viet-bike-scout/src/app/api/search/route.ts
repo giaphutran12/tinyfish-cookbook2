@@ -4,7 +4,7 @@ export const maxDuration = 800; // Vercel Pro allows up to 800s for Node.js runt
 import { getSupabaseAdmin } from "@/lib/supabase";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-const TINYFISH_SSE_URL = "https://agent.tinyfish.ai/v1/automation/run-sse";
+const MINO_SSE_URL = "https://agent.tinyfish.ai/v1/automation/run-sse";
 const REQUEST_TIMEOUT_MS = 780_000;
 const REQUEST_STAGGER_MS = 0;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
@@ -84,15 +84,11 @@ type SearchBody = {
   useCache?: boolean;
 };
 
-type TinyFishEvent = {
+type MinoEvent = {
   status?: string;
   type?: string;
   resultJson?: unknown;
-  result_json?: unknown;
-  result?: unknown;
-  data?: unknown;
-  streaming_url?: string;
-  run_id?: string;
+  streamingUrl?: string;
 };
 
 interface CacheRow {
@@ -106,20 +102,6 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const sseData = (payload: unknown) => `data: ${JSON.stringify(payload)}\n\n`;
 
 const elapsedSeconds = (startedAt: number) => ((Date.now() - startedAt) / 1000).toFixed(1);
-
-function getTinyFishResult(event: TinyFishEvent): unknown {
-  const payload = event.resultJson ?? event.result_json ?? event.result ?? event.data;
-
-  if (typeof payload !== "string") {
-    return payload;
-  }
-
-  try {
-    return JSON.parse(payload);
-  } catch {
-    return payload;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Supabase cache helpers (all gracefully degrade on failure)
@@ -185,22 +167,22 @@ async function cacheResult(
 }
 
 // ---------------------------------------------------------------------------
-// TinyFish SSE scraper
+// Mino SSE scraper (unchanged)
 // ---------------------------------------------------------------------------
 
-async function runTinyFishSseForSite(
+async function runMinoSseForSite(
   url: string,
   apiKey: string,
   enqueue: (payload: unknown) => void,
 ): Promise<boolean> {
   const startedAt = Date.now();
-  console.log(`[TINYFISH] Starting: ${url}`);
+  console.log(`[MINO] Starting: ${url}`);
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    const response = await fetch(TINYFISH_SSE_URL, {
+    const response = await fetch(MINO_SSE_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -215,11 +197,11 @@ async function runTinyFishSseForSite(
     });
 
     if (!response.ok) {
-      throw new Error(`TinyFish request failed (${response.status})`);
+      throw new Error(`Mino request failed (${response.status})`);
     }
 
     if (!response.body) {
-      throw new Error("TinyFish response body is empty");
+      throw new Error("Mino response body is empty");
     }
 
     const reader = response.body.getReader();
@@ -240,28 +222,20 @@ async function runTinyFishSseForSite(
           continue;
         }
 
-        let event: TinyFishEvent;
+        let event: MinoEvent;
         try {
           event = JSON.parse(line.slice(6));
         } catch {
           continue;
         }
 
-        if (event.streaming_url) {
-          console.log("[TINYFISH] streaming_url", event.streaming_url);
-          enqueue({
-            type: "STREAMING_URL",
-            siteUrl: url,
-            streaming_url: event.streaming_url,
-            run_id: event.run_id,
-          });
+        if (event.streamingUrl) {
+          console.log("[MINO] streamingUrl", event.streamingUrl);
+          enqueue({ type: "STREAMING_URL", siteUrl: url, streamingUrl: event.streamingUrl });
         }
 
-        const eventType = event.type?.toUpperCase();
-        const eventStatus = event.status?.toUpperCase();
-
-        if (eventType === "COMPLETE" || eventStatus === "COMPLETED") {
-          resultJson = getTinyFishResult(event);
+        if (event.status === "COMPLETED") {
+          resultJson = event.resultJson;
         }
       }
     }
@@ -272,23 +246,13 @@ async function runTinyFishSseForSite(
         siteUrl: url,
         shop: resultJson,
       });
-      enqueue({
-        type: "STREAMING_DONE",
-        siteUrl: url,
-        success: true,
-      });
-      console.log(`[TINYFISH] Complete: ${url} (${elapsedSeconds(startedAt)}s)`);
+      console.log(`[MINO] Complete: ${url} (${elapsedSeconds(startedAt)}s)`);
       return true;
     }
 
-    throw new Error("TinyFish stream finished without COMPLETED resultJson");
+    throw new Error("Mino stream finished without COMPLETED resultJson");
   } catch (error) {
-    enqueue({
-      type: "STREAMING_DONE",
-      siteUrl: url,
-      success: false,
-    });
-    console.error(`[TINYFISH] Failed: ${url}`, error);
+    console.error(`[MINO] Failed: ${url}`, error);
     return false;
   } finally {
     clearTimeout(timeoutId);
@@ -370,11 +334,11 @@ export async function POST(request: Request): Promise<Response> {
         });
       }
 
-      // ---- Scrape uncached sites via TinyFish ----
+      // ---- Scrape uncached sites via Mino ----
       let liveSucceeded = 0;
 
       if (uncachedSites.length > 0) {
-        const tasks = uncachedSites.map((url) =>
+        const tasks = uncachedSites.map((url, index) =>
           (async () => {
             // Per-site enqueue wrapper: adds source + fires cache upsert
             const siteEnqueue = (payload: unknown) => {
@@ -390,7 +354,7 @@ export async function POST(request: Request): Promise<Response> {
               }
             };
 
-            return runTinyFishSseForSite(url, apiKey, siteEnqueue);
+            return runMinoSseForSite(url, apiKey, siteEnqueue);
           })(),
         );
 
