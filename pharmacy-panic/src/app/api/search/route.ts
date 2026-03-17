@@ -14,32 +14,26 @@ const TINYFISH_SSE_URL = "https://agent.tinyfish.ai/v1/automation/run-sse";
 const REQUEST_TIMEOUT_MS = 780_000;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
-/**
- * Validated pharmacy search URLs (2026-03-17 browser testing).
- * CRITICAL corrections from learnings.md:
- *  - Long Châu: ?s= NOT ?key= (key silently returns 0 results)
- *  - Pharmacity: ?keyword= NOT ?q= (q shows random unfiltered products)
- *  - An Khang: www.nhathuocankhang.com (www prefix required)
- *  - Guardian & Medicare EXCLUDED (beauty chains, not pharmacies)
- */
-const PHARMACY_SITES: Record<
-  string,
-  { name: string; searchUrl: (q: string) => string }
-> = {
+const PHARMACY_SITES: Record<string, { name: string; searchUrl: (q: string) => string }> = {
   longchau: {
     name: "Long Châu",
-    searchUrl: (q) =>
-      `https://nhathuoclongchau.com.vn/tim-kiem?s=${encodeURIComponent(q)}`,
+    searchUrl: (q) => `https://nhathuoclongchau.com.vn/tim-kiem?key=${encodeURIComponent(q)}`,
   },
   pharmacity: {
     name: "Pharmacity",
-    searchUrl: (q) =>
-      `https://www.pharmacity.vn/search?keyword=${encodeURIComponent(q)}`,
+    searchUrl: (q) => `https://www.pharmacity.vn/search?q=${encodeURIComponent(q)}`,
   },
   ankhang: {
     name: "An Khang",
-    searchUrl: (q) =>
-      `https://www.nhathuocankhang.com/tim-kiem?keyword=${encodeURIComponent(q)}`,
+    searchUrl: (q) => `https://nhathuocankhang.com/tim-kiem?keyword=${encodeURIComponent(q)}`,
+  },
+  guardian: {
+    name: "Guardian",
+    searchUrl: (q) => `https://www.guardian.com.vn/catalogsearch/result/?q=${encodeURIComponent(q)}`,
+  },
+  medicare: {
+    name: "Medicare",
+    searchUrl: (q) => `https://medicare.vn/products?keyword=${encodeURIComponent(q)}`,
   },
 };
 
@@ -104,10 +98,11 @@ Use error values: "no_results" if the page says no products found, "blocked" if 
 type SearchBody = { query: string; useCache?: boolean };
 
 type TinyFishEvent = {
-  status?: string;
   type?: string;
-  resultJson?: unknown;
-  streamingUrl?: string;
+  status?: string;
+  result?: unknown;
+  streaming_url?: string;
+  run_id?: string;
 };
 
 interface CacheRow {
@@ -253,20 +248,20 @@ async function runTinyFishSseForSite(
           continue;
         }
 
-        if (event.streamingUrl) {
+        if (event.streaming_url) {
           console.log(
             `[PHARMACY] streamingUrl for ${siteKey}:`,
-            event.streamingUrl,
+            event.streaming_url,
           );
           enqueue({
             type: "STREAMING_URL",
             siteUrl: url,
-            streamingUrl: event.streamingUrl,
+            streamingUrl: event.streaming_url,
           });
         }
 
-        if (event.status === "COMPLETED") {
-          resultJson = event.resultJson;
+        if (event.type === "COMPLETE" && event.status === "COMPLETED") {
+          resultJson = event.result;
         }
       }
     }
@@ -293,7 +288,7 @@ async function runTinyFishSseForSite(
       return true;
     }
 
-    throw new Error("TinyFish stream finished without COMPLETED resultJson");
+    throw new Error("TinyFish stream finished without COMPLETE result");
   } catch (error) {
     console.error(`[PHARMACY] Failed: ${siteKey}`, error);
     return false;
