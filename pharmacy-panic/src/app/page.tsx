@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { Search, X, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { usePharmacySearch } from '@/hooks/use-pharmacy-search';
@@ -94,48 +95,52 @@ export default function Home() {
               disabled={state.isSearching}
               className="flex-1 h-11 px-4 rounded-lg border border-zinc-200 bg-white text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-zinc-300 disabled:opacity-50 transition-shadow text-sm"
             />
-            <Button
-              onClick={() => handleSearch(query)}
-              disabled={!query.trim() || state.isSearching}
-              className="h-11 px-6"
-            >
-              {state.isSearching ? 'Searching…' : '🔍 Search'}
-            </Button>
-            {state.isSearching && (
+            {state.isSearching ? (
               <Button
-                variant="outline"
+                variant="destructive"
                 onClick={abort}
-                className="h-11 px-4 border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300"
+                className="h-11 px-4"
               >
-                ✕ Cancel
+                <X className="h-4 w-4 mr-2" />
+                Cancel
+              </Button>
+            ) : (
+              <Button
+                onClick={() => handleSearch(query)}
+                disabled={!query.trim()}
+                className="h-11 px-6"
+              >
+                <Search className="h-4 w-4 mr-2" />
+                Search
               </Button>
             )}
           </div>
 
-          {/* Cache toggle */}
-          <button
-            type="button"
-            onClick={() => !state.isSearching && setUseCache((c) => !c)}
-            disabled={state.isSearching}
-            className={`inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-full border transition-colors disabled:opacity-40 ${
-              useCache
-                ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                : 'bg-zinc-50 border-zinc-200 text-zinc-500 hover:border-zinc-300 hover:text-zinc-700'
-            }`}
-          >
-            {useCache ? '⚡ Cached results (faster)' : '🔴 Live scraping (shows TinyFish in action)'}
-          </button>
+          {!state.isSearching && (
+            <button
+              type="button"
+              onClick={() => setUseCache((c) => !c)}
+              className={`inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-full border transition-colors ${
+                useCache
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                  : 'bg-zinc-50 border-zinc-200 text-zinc-500 hover:border-zinc-300 hover:text-zinc-700'
+              }`}
+            >
+              {useCache ? '⚡ Using cached results' : '🔴 Live scraping'}
+            </button>
+          )}
         </div>
 
         {/* Progress section */}
         {triggered && (state.isSearching || state.elapsed) && (
           <div className="space-y-2">
             <div className="flex justify-between text-sm text-zinc-600">
-              <span>
+              <span className="flex items-center gap-1.5">
+                {state.isSearching && <Loader2 className="h-3 w-3 animate-spin" />}
                 {state.isSearching
-                  ? 'Searching…'
+                  ? 'Searching...'
                   : state.cachedCount > 0 && state.cachedCount === state.progress.total
-                  ? '⚡ Instant results from cache'
+                  ? '⚡ Instant from cache'
                   : `Complete — ${state.elapsed}`}
               </span>
               <span>
