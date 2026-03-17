@@ -399,17 +399,24 @@ export async function POST(request: Request): Promise<Response> {
         });
       }
 
+      // ---- Keepalive: ping every 15s to prevent proxy/browser dropping the connection ----
+      const keepalive = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(": keepalive\n\n"));
+        } catch {
+          clearInterval(keepalive);
+        }
+      }, 15_000);
+
       // ---- Scrape uncached sites via TinyFish (all in parallel, no staggering) ----
       let liveSucceeded = 0;
 
       if (uncachedSites.length > 0) {
         const tasks = uncachedSites.map((site) =>
           (async () => {
-            // Per-site enqueue wrapper: fires cache upsert on result
             const siteEnqueue = (payload: unknown) => {
               const event = payload as Record<string, unknown>;
               if (event.type === "PHARMACY_RESULT") {
-                // Fire-and-forget cache upsert — never block stream
                 if (supabase && useCache && event.result) {
                   cacheResult(
                     supabase,
@@ -437,6 +444,8 @@ export async function POST(request: Request): Promise<Response> {
             r.status === "fulfilled" && r.value,
         ).length;
       }
+
+      clearInterval(keepalive);
 
       enqueue({
         type: "SEARCH_COMPLETE",
