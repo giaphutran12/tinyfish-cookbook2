@@ -8,10 +8,10 @@
 
 ## What it does
 
-Vietnamese pharmacies don't publish prices online. You have to visit Long Châu, Pharmacity, and An Khang separately, each with different layouts and product names. This app sends TinyFish browser agents to all three **simultaneously**, extracts structured pricing data, and streams results back in real time.
+Vietnamese pharmacies don't publish prices online. You have to visit Long Châu, Pharmacity, An Khang, Guardian, and Medicare separately, each with different layouts and product names. This app sends TinyFish browser agents to all five **simultaneously**, extracts structured pricing data, and streams results back in real time.
 
-- Search any medicine or health product across **3 major chains**
-- See **live prices** from Long Châu, Pharmacity, and An Khang side-by-side
+- Search any medicine or health product across **5 pharmacy chains**
+- See **live prices** from Long Châu, Pharmacity, An Khang, Guardian, and Medicare side-by-side
 - **Quick category buttons** for common searches (pain relief, cold medicine, vitamins, etc.)
 - Results stream in as each pharmacy completes — no waiting for the slowest one
 - Optional **6-hour result caching** via Supabase (app works fine without it)
@@ -58,33 +58,11 @@ const response = await fetch(TINYFISH_SSE_URL, {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
-    Authorization: `Bearer ${process.env.TINYFISH_API_KEY}`,
+    "X-API-Key": process.env.TINYFISH_API_KEY!,
   },
   body: JSON.stringify({
     url: searchUrl,
-    goal: `You are extracting medicine/health product data from a Vietnamese pharmacy search results page.
-
-Steps:
-1. Wait for the page content to fully render. Many Vietnamese pharmacy sites are SPAs (React/Vue) or use lazy-loading — wait until product listing cards are visible in the DOM before extracting. Allow up to 10 seconds for JavaScript rendering.
-2. Dismiss any cookie consent banners, popup overlays, newsletter modals, or "Tải app" (download app) prompts by clicking their close/dismiss buttons.
-...`,
-    output_schema: {
-      type: "object",
-      properties: {
-        pharmacy: { type: "string" },
-        products: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              name: { type: "string" },
-              price: { type: "number" },
-              unit: { type: "string" },
-            },
-          },
-        },
-      },
-    },
+    goal: "Extract medicine/health product pricing from this Vietnamese pharmacy website...",
   }),
 });
 ```
@@ -129,10 +107,14 @@ graph TD
   API -->|SSE| TF1["TinyFish: Long Châu"]
   API -->|SSE| TF2["TinyFish: Pharmacity"]
   API -->|SSE| TF3["TinyFish: An Khang"]
+  API -->|SSE| TF4["TinyFish: Guardian"]
+  API -->|SSE| TF5["TinyFish: Medicare"]
   API -.->|cache lookup| SB[("Supabase<br/>pharmacy_cache")]
   TF1 --> N["Normalize Results"]
   TF2 --> N
   TF3 --> N
+  TF4 --> N
+  TF5 --> N
   N -->|SSE Stream| Browser
   N -.->|upsert cache| SB
 ```
