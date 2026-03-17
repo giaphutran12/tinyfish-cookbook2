@@ -16,14 +16,14 @@ const DOSAGE_COLORS: Record<PharmacyProduct['dosage_form'], string> = {
 };
 
 const DOSAGE_LABELS: Record<PharmacyProduct['dosage_form'], string> = {
-  tablet:   'Viên nén',
-  capsule:  'Viên nang',
-  syrup:    'Siro',
-  cream:    'Kem',
-  sachet:   'Gói',
-  tube:     'Tuýp',
-  bottle:   'Chai',
-  other:    'Khác',
+  tablet:   'Tablet',
+  capsule:  'Capsule',
+  syrup:    'Syrup',
+  cream:    'Cream',
+  sachet:   'Sachet',
+  tube:     'Tube',
+  bottle:   'Bottle',
+  other:    'Other',
 };
 
 interface ProductCardProps {
@@ -37,10 +37,10 @@ export function ProductCard({ product, pharmacyName }: ProductCardProps) {
   const hasSale = product.sale_price !== null && product.original_price !== null && product.sale_price < product.original_price;
 
   const stockConfig = {
-    in_stock:             { dot: 'bg-green-500',  text: 'text-green-600',  label: 'Còn hàng' },
-    out_of_stock:         { dot: 'bg-red-500',    text: 'text-red-500',    label: 'Hết hàng' },
-    prescription_required:{ dot: 'bg-yellow-500', text: 'text-yellow-600', label: 'Cần toa' },
-    limited:              { dot: 'bg-orange-500', text: 'text-orange-600', label: 'Sắp hết' },
+    in_stock:             { dot: 'bg-green-500',  text: 'text-green-600',  label: 'In Stock' },
+    out_of_stock:         { dot: 'bg-red-500',    text: 'text-red-500',    label: 'Out of Stock' },
+    prescription_required:{ dot: 'bg-yellow-500', text: 'text-yellow-600', label: 'Rx Required' },
+    limited:              { dot: 'bg-orange-500', text: 'text-orange-600', label: 'Limited' },
   }[product.stock_status];
 
   const card = (
@@ -85,7 +85,7 @@ export function ProductCard({ product, pharmacyName }: ProductCardProps) {
             )}
           </div>
         ) : (
-          <div className="text-sm text-zinc-400 italic">Liên hệ để biết giá</div>
+          <div className="text-sm text-zinc-400 italic">Contact for price</div>
         )}
 
         {product.promo_badge && (

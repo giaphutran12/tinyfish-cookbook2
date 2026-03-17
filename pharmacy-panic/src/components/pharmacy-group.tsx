@@ -27,7 +27,7 @@ export function PharmacyGroup({ result, pharmacyKey }: PharmacyGroupProps) {
         <div className="flex items-center gap-3 flex-wrap">
           <PharmacyBadge pharmacyKey={pharmacyKey} pharmacyName={displayName} />
           <span className="text-sm text-zinc-500">
-            {productCount} {productCount === 1 ? 'sản phẩm' : 'sản phẩm'}
+            {productCount} {productCount === 1 ? 'product' : 'products'}
           </span>
           {source === 'cache' && (
             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 border border-emerald-200">
@@ -46,11 +46,11 @@ export function PharmacyGroup({ result, pharmacyKey }: PharmacyGroupProps) {
 
       {error ? (
         <div className="p-4 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">
-          Lỗi: {error}
+          Error: {error}
         </div>
       ) : productCount === 0 ? (
         <div className="p-8 text-center bg-zinc-50 rounded-xl border border-dashed border-zinc-200 text-zinc-500 text-sm">
-          Không tìm thấy sản phẩm phù hợp tại {displayName}.
+          No products found at {displayName}.
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

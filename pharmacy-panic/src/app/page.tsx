@@ -174,7 +174,7 @@ export default function Home() {
         {/* Error */}
         {state.error && (
           <div className="p-4 bg-red-50 text-red-600 rounded-lg border border-red-100 text-sm">
-            Lỗi: {state.error}
+            Error: {state.error}
           </div>
         )}
 
@@ -198,7 +198,7 @@ export default function Home() {
         {/* No results state */}
         {triggered && !state.isSearching && state.elapsed && state.results.length === 0 && !state.error && (
           <div className="text-center py-12 text-zinc-400 border-2 border-dashed border-zinc-100 rounded-xl">
-            Không tìm thấy kết quả. Hãy thử từ khóa khác.
+            No results found. Try a different search term.
           </div>
         )}
 
