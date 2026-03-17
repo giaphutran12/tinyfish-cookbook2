@@ -12,7 +12,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 const TINYFISH_SSE_URL = "https://agent.tinyfish.ai/v1/automation/run-sse";
 const REQUEST_TIMEOUT_MS = 780_000;
-const REQUEST_STAGGER_MS = 0; // No staggering — fire all in parallel
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 /**

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PharmacyResult, SearchState } from '@/lib/types';
+import type { SearchState } from '@/lib/types';
 import { normalizePharmacyResult, isEmptyResult } from '@/lib/normalize';
 
 export function usePharmacySearch(): {
