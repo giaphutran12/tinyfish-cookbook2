@@ -1,14 +1,10 @@
 export const runtime = "nodejs";
-export const maxDuration = 800;
+export const maxDuration = 800; // Vercel Pro allows up to 800s for Node.js runtime
 
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { getEnv } from "@/lib/env";
-import { tryGetSupabase } from "@/lib/supabase";
-import {
-  normalizePharmacyResult,
-  isEmptyResult,
-} from "@/lib/normalize";
+import { getSupabaseAdmin } from "@/lib/supabase";
+import { normalizePharmacyResult, isEmptyResult } from "@/lib/normalize";
 import type { PharmacyResult } from "@/lib/types";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -16,65 +12,91 @@ import type { PharmacyResult } from "@/lib/types";
 
 const TINYFISH_SSE_URL = "https://agent.tinyfish.ai/v1/automation/run-sse";
 const REQUEST_TIMEOUT_MS = 780_000;
-const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const REQUEST_STAGGER_MS = 0; // No staggering — fire all in parallel
+const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
-const PHARMACY_SITES: Record<string, { name: string; url: string }> = {
+/**
+ * Validated pharmacy search URLs (2026-03-17 browser testing).
+ * CRITICAL corrections from learnings.md:
+ *  - Long Châu: ?s= NOT ?key= (key silently returns 0 results)
+ *  - Pharmacity: ?keyword= NOT ?q= (q shows random unfiltered products)
+ *  - An Khang: www.nhathuocankhang.com (www prefix required)
+ *  - Guardian & Medicare EXCLUDED (beauty chains, not pharmacies)
+ */
+const PHARMACY_SITES: Record<
+  string,
+  { name: string; searchUrl: (q: string) => string }
+> = {
   longchau: {
-    name: "Long Ch\u00e2u",
-    url: "https://nhathuoclongchau.com.vn/tim-kiem?key={query}",
+    name: "Long Châu",
+    searchUrl: (q) =>
+      `https://nhathuoclongchau.com.vn/tim-kiem?s=${encodeURIComponent(q)}`,
   },
   pharmacity: {
     name: "Pharmacity",
-    url: "https://www.pharmacity.vn/search?q={query}",
+    searchUrl: (q) =>
+      `https://www.pharmacity.vn/search?keyword=${encodeURIComponent(q)}`,
   },
   ankhang: {
     name: "An Khang",
-    url: "https://nhathuocankhang.com/tim-kiem?keyword={query}",
-  },
-  guardian: {
-    name: "Guardian",
-    url: "https://www.guardian.com.vn/catalogsearch/result/?q={query}",
-  },
-  medicare: {
-    name: "Medicare",
-    url: "https://medicare.vn/products?keyword={query}",
+    searchUrl: (q) =>
+      `https://www.nhathuocankhang.com/tim-kiem?keyword=${encodeURIComponent(q)}`,
   },
 };
 
-const GOAL_PROMPT = `You are extracting medicine/health product pricing from this Vietnamese pharmacy website.
+const GOAL_PROMPT = `You are extracting medicine/health product data from a Vietnamese pharmacy search results page.
 
 Steps:
-1. Wait for the page to fully load (some pages use JavaScript rendering)
-2. Handle any popups or cookie banners by dismissing them
-3. Find ALL product listings on the FIRST PAGE of search results only
-4. Do NOT click "Load More" or navigate to other pages
-5. For each product (maximum 20), extract:
-   - product_name: Full Vietnamese product name
-   - brand: Manufacturer or brand name (if visible)
-   - dosage_form: One of "vi\u00ean n\u00e9n", "vi\u00ean nang", "siro", "kem", "g\u00f3i", "chai", "tu\u00fdp", or the actual form shown
-   - quantity: Package size (e.g., "H\u1ed9p 10 v\u1ec9 x 10 vi\u00ean", "Chai 100ml")
-   - original_price: Original price in VND as a number (e.g., 32000 not "32.000\u20ab")
-   - sale_price: Discounted price in VND if on sale, null otherwise
-   - price_unit: What the price is for ("vi\u00ean", "v\u1ec9", "h\u1ed9p", "tu\u00fdp", "chai")
-   - quantity_per_unit: Number per unit (e.g., 10 for "10 vi\u00ean/v\u1ec9"), null if not visible
-   - stock_status: "C\u00f2n h\u00e0ng" if available, "H\u1ebft h\u00e0ng" if out of stock, "C\u1ea7n t\u01b0 v\u1ea5n d\u01b0\u1ee3c s\u0129" if prescription required
-   - product_url: Full URL to product detail page
-   - promo_badge: Any promotion text (e.g., "Gi\u1ea3m 11%", "Flash Sale"), null if none
+1. Wait for the page content to fully render. Many Vietnamese pharmacy sites are SPAs (React/Vue) or use lazy-loading — wait until product listing cards are visible in the DOM before extracting. Allow up to 10 seconds for JavaScript rendering.
+2. Dismiss any cookie consent banners, popup overlays, newsletter modals, or "Tải app" (download app) prompts by clicking their close/dismiss buttons.
+3. Extract products from the FIRST PAGE of search results ONLY. Do NOT click "Xem thêm" (Load More), "Trang tiếp" (Next Page), or any pagination controls.
+4. For each product card visible on the page (maximum 20 products), extract:
+   - product_name: The full product name in Vietnamese exactly as displayed (e.g. "Viên uống giảm đau Panadol Extra 500mg")
+   - brand: The manufacturer or brand name if visible on the card (e.g. "GSK", "Sanofi", "DHG Pharma"). Set to null if not displayed.
+   - dosage_form: The product form, mapped to one of: "tablet", "capsule", "syrup", "cream", "sachet", "tube", "drops", "powder", "spray", "injection", "patch", "other". Map from Vietnamese: viên nén=tablet, viên nang=capsule, siro/xi-rô=syrup, kem=cream, gói=sachet, tuýp=tube, nhỏ=drops, bột=powder, xịt=spray, tiêm=injection, miếng dán=patch. If unclear, use "other".
+   - quantity: The packaging quantity as displayed (e.g. "Hộp 10 vỉ x 10 viên", "Chai 30ml", "Tuýp 15g"). Keep the original Vietnamese text.
+   - original_price: The original/listed price as a number in VND WITHOUT dots or commas (e.g. 32000 not "32.000₫"). If the product shows only one price, use that. If the product says "Liên hệ" or "Cần tư vấn dược sĩ", set to null.
+   - sale_price: The discounted/sale price as a number in VND if the product is currently on sale or promotion. Set to null if there is no discount.
+   - price_unit: What the displayed price is for. One of: "viên" (tablet), "vỉ" (strip/blister), "hộp" (box), "tuýp" (tube), "chai" (bottle), "gói" (sachet), "ống" (ampoule), "lọ" (vial). Look for text like "₫/Hộp", "₫/Viên", "/Vỉ" near the price. If not explicitly shown, default to "hộp".
+   - quantity_per_unit: If the listing shows a per-unit breakdown (e.g. "10 viên/vỉ", "3 vỉ x 10 viên"), extract the number of smallest units per price_unit. Set to null if not visible.
+   - stock_status: One of "in_stock", "out_of_stock", or "prescription_required". If the product shows "Cần tư vấn dược sĩ" or "Thuốc kê đơn" (prescription drug), set to "prescription_required". If "Hết hàng" or "Tạm hết", set to "out_of_stock". Otherwise "in_stock".
+   - product_url: The full URL link to the product detail page. Extract the href from the product card's link element. Must be an absolute URL (prepend the site domain if relative).
+   - promo_badge: Any promotional badge text visible on the card (e.g. "Giảm 11%", "Flash Sale", "Mua 1 tặng 1", "Deal HOT"). Set to null if no promotion badge.
 
-Return a JSON object:
+5. Special handling:
+   - For prescription drugs marked "Cần tư vấn dược sĩ": set stock_status to "prescription_required", set original_price and sale_price to null, still extract all other fields.
+   - Price numbers must be integers in VND (remove dots used as thousand separators: "32.000" becomes 32000, "1.250.000" becomes 1250000).
+   - If a product card has no price shown at all, set original_price and sale_price to null.
+
+6. Return a JSON object with this EXACT structure:
 {
-  "pharmacy": "Name of the pharmacy chain",
-  "search_term": "The search query used",
-  "products": [array of products as described above]
+  "pharmacy": "Name of the pharmacy chain (e.g. An Khang, Long Châu, Pharmacity)",
+  "search_term": "The search query term from the URL",
+  "products": [
+    {
+      "product_name": "Viên uống giảm đau Panadol Extra 500mg",
+      "brand": "GSK",
+      "dosage_form": "tablet",
+      "quantity": "Hộp 10 vỉ x 10 viên",
+      "original_price": 32000,
+      "sale_price": 28500,
+      "price_unit": "hộp",
+      "quantity_per_unit": 100,
+      "stock_status": "in_stock",
+      "product_url": "https://example.com/product/panadol-extra",
+      "promo_badge": "Giảm 11%"
+    }
+  ]
 }
 
-If no products are found or the page is blocked, return:
+7. If the page shows NO results, the search term was not found, or you encounter an error, return:
 {
-  "pharmacy": "Name",
-  "search_term": "query",
+  "pharmacy": "Name of the pharmacy chain",
+  "search_term": "The search query term",
   "products": [],
   "error": "no_results"
-}`;
+}
+Use error values: "no_results" if the page says no products found, "blocked" if access was denied or CAPTCHA blocked you, "timeout" if the page failed to load.`;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -108,6 +130,21 @@ const elapsedSeconds = (startedAt: number) =>
 // Supabase cache helpers (all gracefully degrade on failure)
 // ---------------------------------------------------------------------------
 
+/**
+ * Try to get Supabase client — returns null if env vars missing.
+ * Defined INLINE so missing Supabase vars never break search.
+ */
+function tryGetSupabase(): SupabaseClient | null {
+  try {
+    return getSupabaseAdmin();
+  } catch {
+    console.warn(
+      "[PHARMACY] [CACHE] Supabase not configured — caching disabled",
+    );
+    return null;
+  }
+}
+
 /** Get fresh cached results for a query (within TTL) */
 async function getCachedResults(
   supabase: SupabaseClient,
@@ -140,17 +177,15 @@ async function cacheResult(
   pharmacy: string,
   resultData: unknown,
 ): Promise<void> {
-  const { error } = await supabase
-    .from("pharmacy_cache")
-    .upsert(
-      {
-        query,
-        pharmacy,
-        result_data: resultData,
-        scraped_at: new Date().toISOString(),
-      },
-      { onConflict: "query,pharmacy", ignoreDuplicates: false },
-    );
+  const { error } = await supabase.from("pharmacy_cache").upsert(
+    {
+      query,
+      pharmacy,
+      result_data: resultData,
+      scraped_at: new Date().toISOString(),
+    },
+    { onConflict: "query,pharmacy", ignoreDuplicates: false },
+  );
 
   if (error) {
     console.error(
@@ -238,7 +273,7 @@ async function runTinyFishSseForSite(
     }
 
     if (resultJson) {
-      const normalized = normalizePharmacyResult(resultJson);
+      const normalized: PharmacyResult = normalizePharmacyResult(resultJson);
 
       if (isEmptyResult(normalized)) {
         console.warn(
@@ -288,20 +323,20 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "Missing search query" }, { status: 400 });
   }
 
-  let apiKey: string;
-  try {
-    apiKey = getEnv().TINYFISH_API_KEY;
-  } catch {
+  // Direct process.env read — NOT getEnv() — so missing Supabase vars never break search
+  const apiKey = process.env.TINYFISH_API_KEY;
+  if (!apiKey) {
     return Response.json(
       { error: "Missing TINYFISH_API_KEY" },
       { status: 500 },
     );
   }
 
+  // Build search URLs for each pharmacy
   const siteEntries = Object.entries(PHARMACY_SITES).map(([key, site]) => ({
     key,
     name: site.name,
-    url: site.url.replace("{query}", encodeURIComponent(query)),
+    url: site.searchUrl(query),
   }));
 
   console.log(
@@ -324,7 +359,12 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   // Partition sites into cached vs uncached
-  const cachedSites: { key: string; name: string; url: string; row: CacheRow }[] = [];
+  const cachedSites: {
+    key: string;
+    name: string;
+    url: string;
+    row: CacheRow;
+  }[] = [];
   const uncachedSites: { key: string; name: string; url: string }[] = [];
 
   for (const entry of siteEntries) {
@@ -350,24 +390,32 @@ export async function POST(request: Request): Promise<Response> {
 
       // ---- Stream cached results instantly ----
       for (const { key, row } of cachedSites) {
-        const normalized = normalizePharmacyResult(row.result_data);
+        const normalized: PharmacyResult = normalizePharmacyResult(
+          row.result_data,
+        );
         enqueue({
           type: "PHARMACY_RESULT",
           pharmacy: key,
-          result: { ...normalized, source: "cache", cached_at: row.scraped_at },
+          result: {
+            ...normalized,
+            source: "cache" as const,
+            cached_at: row.scraped_at,
+          },
           source: "cache",
         });
       }
 
-      // ---- Scrape uncached sites via TinyFish (all in parallel) ----
+      // ---- Scrape uncached sites via TinyFish (all in parallel, no staggering) ----
       let liveSucceeded = 0;
 
       if (uncachedSites.length > 0) {
         const tasks = uncachedSites.map((site) =>
           (async () => {
+            // Per-site enqueue wrapper: fires cache upsert on result
             const siteEnqueue = (payload: unknown) => {
               const event = payload as Record<string, unknown>;
               if (event.type === "PHARMACY_RESULT") {
+                // Fire-and-forget cache upsert — never block stream
                 if (supabase && useCache && event.result) {
                   cacheResult(
                     supabase,
