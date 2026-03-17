@@ -417,7 +417,7 @@ export default function Home() {
         {/* Per-slot results */}
         {anyTriggered ? (
           <div className="flex flex-col gap-12">
-            {activeSlotHookIndices.map((hi, slotPos) => {
+            {activeSlotHookIndices.map((hi) => {
               if (!triggered[hi]) return null;
               const hook = allHooks[hi];
               const filtered = filterAndSort(hook.state.venues, dayFilter, dealTypeFilter, nameFilter, sortOrder);
