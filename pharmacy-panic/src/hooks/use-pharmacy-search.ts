@@ -160,7 +160,10 @@ export function usePharmacySearch(): {
             setState((prev) => ({
               ...prev,
               isSearching: false,
-              error: errorMsg,
+              // Suppress error if we already have results (connection dropped after partial success)
+              error: prev.results.length > 0 ? null : errorMsg,
+              // If results exist, mark elapsed as approximate
+              elapsed: prev.results.length > 0 ? (prev.elapsed ?? 'partial') : prev.elapsed,
             }));
           }
         } finally {

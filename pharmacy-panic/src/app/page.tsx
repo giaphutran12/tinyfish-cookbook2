@@ -157,8 +157,8 @@ export default function Home() {
           </div>
         )}
 
-        {/* Live preview iframes */}
-        {state.streamingUrls.length > 0 && (
+        {/* Live preview iframes — removed when search finishes */}
+        {state.isSearching && state.streamingUrls.length > 0 && (
           <LivePreviewGrid previews={state.streamingUrls} />
         )}
 
