@@ -129,18 +129,19 @@ export function useDealSearch(): {
                     s.siteUrl === String(event.siteUrl || '') ? { ...s, done: true } : s
                   ),
                 }));
-              } else if (event.type === 'SEARCH_COMPLETE') {
-                const total = Number(event.total ?? 0);
-                const elapsed = String(event.elapsed ?? '');
-                const cachedCount = Number(event.cached ?? 0);
-                setState((prev) => ({
-                  ...prev,
-                  isSearching: false,
-                  progress: { ...prev.progress, total },
-                  elapsed,
-                  cachedCount,
-                }));
-              }
+               } else if (event.type === 'SEARCH_COMPLETE') {
+                 const total = Number(event.total ?? 0);
+                 const elapsed = String(event.elapsed ?? '');
+                 const cachedCount = Number(event.cached ?? 0);
+                 setState((prev) => ({
+                   ...prev,
+                   isSearching: false,
+                   progress: { ...prev.progress, total },
+                   elapsed,
+                   cachedCount,
+                   streamingUrls: prev.streamingUrls.map((s) => ({ ...s, done: true })),
+                 }));
+               }
             }
           }
         } catch (err) {
