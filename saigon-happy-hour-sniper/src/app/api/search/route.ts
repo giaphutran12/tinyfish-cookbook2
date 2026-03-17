@@ -17,7 +17,9 @@ type TinyFishEvent = {
   status?: string;
   type?: string;
   resultJson?: unknown;
+  result_json?: unknown;
   streamingUrl?: string;
+  streaming_url?: string;
 };
 
 interface CacheRow {
@@ -156,13 +158,14 @@ async function runTinyFishSseForSite(
           continue;
         }
 
-        if (event.streamingUrl) {
-          console.log("[TINYFISH] streamingUrl", event.streamingUrl);
-          enqueue({ type: "STREAMING_URL", siteUrl: url, streamingUrl: event.streamingUrl });
+        const streamUrl = event.streaming_url || event.streamingUrl;
+        if (streamUrl) {
+          console.log("[TINYFISH] streamingUrl", streamUrl);
+          enqueue({ type: "STREAMING_URL", siteUrl: url, streamingUrl: streamUrl });
         }
 
-        if (event.status === "COMPLETED") {
-          resultJson = event.resultJson;
+        if (event.status === "COMPLETED" || event.type === "COMPLETED") {
+          resultJson = event.result_json || event.resultJson;
         }
       }
     }
