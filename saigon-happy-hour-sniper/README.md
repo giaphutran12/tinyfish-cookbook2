@@ -35,11 +35,11 @@ POST /api/search
        │
        ├── Cache hit? → stream result instantly via SSE
        │
-        └── Cache miss? → fire TinyFish SSE requests for all venues in parallel
+        └── Cache miss? → fire TinyFish SDK requests for all venues in parallel
                               │
                               ├── STREAMING_URL event → forward iframe URL to client
                               │
-                              └── COMPLETED event → parse JSON, stream to client, upsert to cache
+                              └── COMPLETE event → parse JSON, stream to client, upsert to cache
 ```
 
 Each district has 2–5 target venues. TinyFish handles all the hard parts: cookie banners, dynamic loading, Vietnamese language translation, pagination. The API route streams results via **Server-Sent Events** so the UI updates as venues finish — typically within 15–30 seconds for a full district scrape.
@@ -51,28 +51,30 @@ Each district has 2–5 target venues. TinyFish handles all the hard parts: cook
 Here's how the app calls TinyFish to scrape each venue:
 
 ```typescript
-const response = await fetch("https://agent.tinyfish.ai/v1/automation/run-sse", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    Accept: "text/event-stream",
-    "X-API-Key": apiKey,
-  },
-  body: JSON.stringify({
+import { TinyFish } from "@tiny-fish/sdk";
+
+const client = new TinyFish();
+
+const stream = await client.agent.stream(
+  {
     url: venueUrl,
     goal: GOAL_PROMPT,
-  }),
-});
+  },
+  {
+    onStreamingUrl: (event) => {
+      console.log(event.streaming_url);
+    },
+    onComplete: (event) => {
+      console.log(event.run_id);
+      console.log(event.result);
+    },
+  },
+);
 
-const reader = response.body.getReader();
-const decoder = new TextDecoder();
-
-while (true) {
-  const { done, value } = await reader.read();
-  if (done) break;
-
-  const text = decoder.decode(value, { stream: true });
-  // Parse SSE events and stream to client
+for await (const event of stream) {
+  if (event.type === "COMPLETE") {
+    // Parse JSON and stream to client
+  }
 }
 ```
 

@@ -1,25 +1,15 @@
 export const runtime = "nodejs";
 export const maxDuration = 800; // Vercel Pro allows up to 800s for Node.js runtime
 
+import { TinyFish } from "@tiny-fish/sdk";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { DISTRICT_SITES, GOAL_PROMPT, REQUEST_TIMEOUT_MS, CACHE_TTL_MS } from "@/lib/district-sites";
 import type { District } from "@/lib/types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-const TINYFISH_SSE_URL = "https://agent.tinyfish.ai/v1/automation/run-sse";
-
 type SearchBody = {
   district: District;
   useCache?: boolean;
-};
-
-type TinyFishEvent = {
-  status?: string;
-  type?: string;
-  resultJson?: unknown;
-  result_json?: unknown;
-  streamingUrl?: string;
-  streaming_url?: string;
 };
 
 interface CacheRow {
@@ -101,72 +91,38 @@ async function cacheResult(
 
 async function runTinyFishSseForSite(
   url: string,
-  apiKey: string,
   enqueue: (payload: unknown) => void,
 ): Promise<boolean> {
   const startedAt = Date.now();
   console.log(`[TINYFISH] Starting: ${url}`);
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
   try {
-    const response = await fetch(TINYFISH_SSE_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-        "X-API-Key": apiKey,
-      },
-      body: JSON.stringify({
-        url,
-        goal: GOAL_PROMPT,
-      }),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      throw new Error(`TinyFish request failed (${response.status})`);
-    }
-
-    if (!response.body) {
-      throw new Error("TinyFish response body is empty");
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+    const client = new TinyFish({ timeout: REQUEST_TIMEOUT_MS });
     let resultJson: unknown;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    const stream = await client.agent.stream(
+      {
+        url,
+        goal: GOAL_PROMPT,
+      },
+      {
+        onStreamingUrl: (event) => {
+          console.log("[TINYFISH] streaming_url", event.streaming_url, event.run_id);
+          enqueue({
+            type: "STREAMING_URL",
+            siteUrl: url,
+            streamingUrl: event.streaming_url,
+          });
+        },
+        onComplete: (event) => {
+          resultJson = event.result;
+        },
+      },
+    );
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) {
-          continue;
-        }
-
-        let event: TinyFishEvent;
-        try {
-          event = JSON.parse(line.slice(6));
-        } catch {
-          continue;
-        }
-
-        const streamUrl = event.streaming_url || event.streamingUrl;
-        if (streamUrl) {
-          console.log("[TINYFISH] streamingUrl", streamUrl);
-          enqueue({ type: "STREAMING_URL", siteUrl: url, streamingUrl: streamUrl });
-        }
-
-        if (event.status === "COMPLETED" || event.type === "COMPLETED") {
-          resultJson = event.result_json || event.resultJson;
-        }
+    for await (const event of stream) {
+      if (event.type === "COMPLETE") {
+        resultJson = event.result;
       }
     }
 
@@ -184,8 +140,6 @@ async function runTinyFishSseForSite(
   } catch (error) {
     console.error(`[TINYFISH] Failed: ${url}`, error);
     return false;
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 
@@ -211,8 +165,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   // Keep direct env read so missing Supabase vars never break search
-  const apiKey = process.env.TINYFISH_API_KEY;
-  if (!apiKey) {
+  if (!process.env.TINYFISH_API_KEY) {
     return Response.json({ error: "Missing TINYFISH_API_KEY" }, { status: 500 });
   }
 
@@ -285,7 +238,7 @@ export async function POST(request: Request): Promise<Response> {
               }
             };
 
-            return runTinyFishSseForSite(url, apiKey, siteEnqueue);
+            return runTinyFishSseForSite(url, siteEnqueue);
           })(),
         );
 
