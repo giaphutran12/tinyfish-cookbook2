@@ -47,11 +47,13 @@ Each city has 2 target sites (Chợ Tốt and batdongsan). TinyFish handles all 
 
 ---
 
-## TinyFish API snippet
+## TinyFish SDK snippet
 
-Here's the core SSE fetch from `/api/search/route.ts` (goal prompt truncated):
+Here's the core SDK stream from `/api/search/route.ts` (goal prompt truncated):
 
 ```typescript
+import { TinyFish } from "@tiny-fish/sdk";
+
 const GOAL_PROMPT = `You are extracting rental apartment/room listings from a Vietnamese real estate website.
 
 Steps:
@@ -66,50 +68,24 @@ Steps:
 4. TRANSLATE all Vietnamese text to English in the output fields marked with _en suffix.
 5. Return a JSON object with platform, city, and listings[] array.`;
 
-async function runTinyFishSseForSite(
-  url: string,
-  apiKey: string,
-  enqueue: (payload: unknown) => void,
-): Promise<boolean> {
-  const response = await fetch("https://agent.tinyfish.ai/v1/automation/run-sse", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-      "X-API-Key": apiKey,
+async function runTinyFishSseForSite(url: string, enqueue: (payload: unknown) => void): Promise<boolean> {
+  const client = new TinyFish({ timeout: 780_000 });
+  const stream = await client.agent.stream({
+    url,
+    goal: GOAL_PROMPT,
+    browser_profile: "stealth",
+    proxy_config: {
+      enabled: true,
+      country_code: "VN",
     },
-    body: JSON.stringify({
-      url,
-      goal: GOAL_PROMPT,
-      proxy_config: {
-        enabled: true,
-        country_code: "VN",
-      },
-      browser_profile: "stealth",
-    }),
   });
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      const event = JSON.parse(line.slice(6));
-
-      if (event.streamingUrl) {
-        enqueue({ type: "STREAMING_URL", streamingUrl: event.streamingUrl });
-      }
-      if (event.status === "COMPLETED") {
-        enqueue({ type: "LISTING_RESULT", data: event.resultJson });
-      }
+  for await (const event of stream) {
+    if (event.type === "STREAMING_URL") {
+      enqueue({ type: "STREAMING_URL", streamingUrl: event.streaming_url });
+    }
+    if (event.type === "COMPLETE" && event.status === "COMPLETED") {
+      enqueue({ type: "LISTING_RESULT", data: event.result });
     }
   }
 }

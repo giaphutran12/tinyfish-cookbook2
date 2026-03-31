@@ -2,16 +2,26 @@ export const runtime = "nodejs";
 export const maxDuration = 800;
 
 import { getSupabaseAdmin } from "@/lib/supabase";
+import {
+  BrowserProfile,
+  RunStatus,
+  TinyFish,
+  type ProxyConfig,
+  type ProxyCountryCode,
+} from "@tiny-fish/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const TINYFISH_SSE_URL = "https://agent.tinyfish.ai/v1/automation/run-sse";
 const REQUEST_TIMEOUT_MS = 780_000;
 const REQUEST_STAGGER_MS = 2000; // 2s between districts — Google Maps anti-bot
 const CACHE_TTL_MS = 48 * 60 * 60 * 1000; // 48 hours — vibe data changes slowly
+const TINYFISH_PROXY_CONFIG: ProxyConfig = {
+  enabled: true,
+  country_code: "VN" as unknown as ProxyCountryCode,
+};
 
 const CITY_DISTRICTS: Record<
   string,
@@ -103,13 +113,6 @@ type VibeBody = {
   useCache?: boolean;
 };
 
-type TinyFishEvent = {
-  status?: string;
-  type?: string;
-  resultJson?: unknown;
-  streamingUrl?: string;
-};
-
 interface CacheRow {
   district: string;
   vibe_data: unknown;
@@ -197,81 +200,47 @@ async function cacheResult(
 async function runTinyFishSseForDistrict(
   district: { name: string; lat: number; lng: number },
   city: string,
-  apiKey: string,
   enqueue: (payload: unknown) => void,
 ): Promise<boolean> {
   const startedAt = Date.now();
   const mapsUrl = `https://www.google.com/maps/search/coworking+space+in+${encodeURIComponent(district.name + ", " + city)}`;
   console.log(`[VIBE] [TINYFISH] Starting: ${district.name} (${mapsUrl})`);
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
   try {
-    const response = await fetch(TINYFISH_SSE_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-        "X-API-Key": apiKey,
-      },
-      body: JSON.stringify({
-        url: mapsUrl,
-        goal: buildVibeGoalPrompt(district.name, city),
-        proxy_config: {
-          enabled: true,
-          country_code: "VN",
-        },
-        browser_profile: "stealth",
-      }),
-      signal: controller.signal,
+    const client = new TinyFish({ timeout: REQUEST_TIMEOUT_MS });
+    const stream = await client.agent.stream({
+      url: mapsUrl,
+      goal: buildVibeGoalPrompt(district.name, city),
+      browser_profile: BrowserProfile.STEALTH,
+      proxy_config: TINYFISH_PROXY_CONFIG,
     });
 
-    if (!response.ok) {
-      throw new Error(`TinyFish request failed (${response.status})`);
-    }
-
-    if (!response.body) {
-      throw new Error("TinyFish response body is empty");
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
     let resultJson: unknown;
+    let runId: string | null = null;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    for await (const event of stream) {
+      if (event.type === "STARTED") {
+        runId = event.run_id;
+        continue;
+      }
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
+      if (event.type === "STREAMING_URL") {
+        runId = event.run_id;
+        console.log("[VIBE] [TINYFISH] streamingUrl", event.streaming_url);
+        enqueue({
+          type: "STREAMING_URL",
+          district: district.name,
+          streamingUrl: event.streaming_url,
+        });
+        continue;
+      }
 
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) {
-          continue;
+      if (event.type === "COMPLETE") {
+        runId = event.run_id;
+        if (event.status === RunStatus.COMPLETED) {
+          resultJson = event.result;
         }
-
-        let event: TinyFishEvent;
-        try {
-          event = JSON.parse(line.slice(6));
-        } catch {
-          continue;
-        }
-
-        if (event.streamingUrl) {
-          console.log("[VIBE] [TINYFISH] streamingUrl", event.streamingUrl);
-          enqueue({
-            type: "STREAMING_URL",
-            district: district.name,
-            streamingUrl: event.streamingUrl,
-          });
-        }
-
-        if (event.status === "COMPLETED") {
-          resultJson = event.resultJson;
-        }
+        break;
       }
     }
 
@@ -282,7 +251,7 @@ async function runTinyFishSseForDistrict(
         data: resultJson,
       });
       console.log(
-        `[VIBE] [TINYFISH] Complete: ${district.name} (${elapsedSeconds(startedAt)}s)`,
+        `[VIBE] [TINYFISH] Complete: ${district.name}${runId ? ` [${runId}]` : ""} (${elapsedSeconds(startedAt)}s)`,
       );
       return true;
     }
@@ -291,8 +260,6 @@ async function runTinyFishSseForDistrict(
   } catch (error) {
     console.error(`[VIBE] [TINYFISH] Failed: ${district.name}`, error);
     return false;
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 
@@ -405,7 +372,6 @@ export async function POST(request: Request): Promise<Response> {
         const ok = await runTinyFishSseForDistrict(
           district,
           city,
-          apiKey,
           districtEnqueue,
         );
         if (ok) liveSucceeded++;

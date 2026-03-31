@@ -2,16 +2,26 @@ export const runtime = "nodejs";
 export const maxDuration = 800; // Vercel Pro allows up to 800s for Node.js runtime
 
 import { getSupabaseAdmin } from "@/lib/supabase";
+import {
+  BrowserProfile,
+  RunStatus,
+  TinyFish,
+  type ProxyConfig,
+  type ProxyCountryCode,
+} from "@tiny-fish/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const TINYFISH_SSE_URL = "https://agent.tinyfish.ai/v1/automation/run-sse";
 const REQUEST_TIMEOUT_MS = 780_000;
 const REQUEST_STAGGER_MS = 0;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+const TINYFISH_PROXY_CONFIG: ProxyConfig = {
+  enabled: true,
+  country_code: "VN" as unknown as ProxyCountryCode,
+};
 
 const CITY_SITES: Record<string, string[]> = {
   hcmc: [
@@ -118,13 +128,6 @@ type SearchBody = {
   useCache?: boolean;
 };
 
-type TinyFishEvent = {
-  status?: string;
-  type?: string;
-  resultJson?: unknown;
-  streamingUrl?: string;
-};
-
 interface CacheRow {
   website: string;
   listing_data: unknown;
@@ -211,80 +214,46 @@ async function cacheResult(
 
 async function runTinyFishSseForSite(
   url: string,
-  apiKey: string,
   enqueue: (payload: unknown) => void,
 ): Promise<boolean> {
   const startedAt = Date.now();
   console.log(`[RENT] [TINYFISH] Starting: ${url}`);
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
   try {
-    const response = await fetch(TINYFISH_SSE_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-        "X-API-Key": apiKey,
-      },
-      body: JSON.stringify({
-        url,
-        goal: GOAL_PROMPT,
-        proxy_config: {
-          enabled: true,
-          country_code: "VN",
-        },
-        browser_profile: "stealth",
-      }),
-      signal: controller.signal,
+    const client = new TinyFish({ timeout: REQUEST_TIMEOUT_MS });
+    const stream = await client.agent.stream({
+      url,
+      goal: GOAL_PROMPT,
+      browser_profile: BrowserProfile.STEALTH,
+      proxy_config: TINYFISH_PROXY_CONFIG,
     });
 
-    if (!response.ok) {
-      throw new Error(`TinyFish request failed (${response.status})`);
-    }
-
-    if (!response.body) {
-      throw new Error("TinyFish response body is empty");
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
     let resultJson: unknown;
+    let runId: string | null = null;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    for await (const event of stream) {
+      if (event.type === "STARTED") {
+        runId = event.run_id;
+        continue;
+      }
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
+      if (event.type === "STREAMING_URL") {
+        runId = event.run_id;
+        console.log("[RENT] [TINYFISH] streamingUrl", event.streaming_url);
+        enqueue({
+          type: "STREAMING_URL",
+          siteUrl: url,
+          streamingUrl: event.streaming_url,
+        });
+        continue;
+      }
 
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) {
-          continue;
+      if (event.type === "COMPLETE") {
+        runId = event.run_id;
+        if (event.status === RunStatus.COMPLETED) {
+          resultJson = event.result;
         }
-
-        let event: TinyFishEvent;
-        try {
-          event = JSON.parse(line.slice(6));
-        } catch {
-          continue;
-        }
-
-        if (event.streamingUrl) {
-          console.log("[RENT] [TINYFISH] streamingUrl", event.streamingUrl);
-          enqueue({
-            type: "STREAMING_URL",
-            siteUrl: url,
-            streamingUrl: event.streamingUrl,
-          });
-        }
-
-        if (event.status === "COMPLETED") {
-          resultJson = event.resultJson;
-        }
+        break;
       }
     }
 
@@ -295,7 +264,7 @@ async function runTinyFishSseForSite(
         data: resultJson,
       });
       console.log(
-        `[RENT] [TINYFISH] Complete: ${url} (${elapsedSeconds(startedAt)}s)`,
+        `[RENT] [TINYFISH] Complete: ${url}${runId ? ` [${runId}]` : ""} (${elapsedSeconds(startedAt)}s)`,
       );
       return true;
     }
@@ -304,8 +273,6 @@ async function runTinyFishSseForSite(
   } catch (error) {
     console.error(`[RENT] [TINYFISH] Failed: ${url}`, error);
     return false;
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 
@@ -409,7 +376,7 @@ export async function POST(request: Request): Promise<Response> {
               }
             };
 
-            return runTinyFishSseForSite(url, apiKey, siteEnqueue);
+            return runTinyFishSseForSite(url, siteEnqueue);
           })(),
         );
 

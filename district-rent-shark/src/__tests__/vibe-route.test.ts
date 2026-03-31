@@ -20,11 +20,11 @@ vi.mock("@/lib/supabase", () => ({
 
 async function importRoute() {
   vi.resetModules();
-  return import("@/app/api/search/route");
+  return import("@/app/api/vibe/route");
 }
 
 function makeRequest(body: unknown): Request {
-  return new Request("http://localhost:3000/api/search", {
+  return new Request("http://localhost:3000/api/vibe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -47,24 +47,25 @@ function mockSuccessStream() {
     createSdkStream([
       {
         type: "STARTED",
-        run_id: "run_1",
+        run_id: "run_2",
         timestamp: "2026-03-30T00:00:00Z",
       },
       {
         type: "STREAMING_URL",
-        run_id: "run_1",
-        streaming_url: "https://agent.tinyfish.ai/stream/run_1",
+        run_id: "run_2",
+        streaming_url: "https://agent.tinyfish.ai/stream/run_2",
         timestamp: "2026-03-30T00:00:01Z",
       },
       {
         type: "COMPLETE",
-        run_id: "run_1",
+        run_id: "run_2",
         status: "COMPLETED",
         timestamp: "2026-03-30T00:00:02Z",
         result: {
-          platform: "Cho Tot",
-          city: "Ho Chi Minh City",
-          listings: [],
+          district: "District 1",
+          city: "hcmc",
+          amenities: {},
+          walkability_score: 8,
         },
         error: null,
       },
@@ -78,7 +79,7 @@ function mockSuccessStream() {
   }));
 }
 
-describe("POST /api/search — validation", () => {
+describe("POST /api/vibe — validation", () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
@@ -97,7 +98,7 @@ describe("POST /api/search — validation", () => {
     process.env.TINYFISH_API_KEY = "test-key";
 
     const { POST } = await importRoute();
-    const req = new Request("http://localhost:3000/api/search", {
+    const req = new Request("http://localhost:3000/api/vibe", {
       method: "POST",
       body: "not-json",
     });
@@ -139,22 +140,14 @@ describe("POST /api/search — validation", () => {
 
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("text/event-stream");
-
-    if (res.body) {
-      const reader = res.body.getReader();
-      while (true) {
-        const { done } = await reader.read();
-        if (done) break;
-      }
-    }
   });
 
-  it("streams SEARCH_COMPLETE and a live TinyFish preview URL", async () => {
+  it("streams VIBE_COMPLETE and a live TinyFish preview URL", async () => {
     process.env.TINYFISH_API_KEY = "test-key-123";
     mockSuccessStream();
 
     const { POST } = await importRoute();
-    const res = await POST(makeRequest({ city: "hcmc" }));
+    const res = await POST(makeRequest({ city: "danang" }));
 
     expect(res.status).toBe(200);
 
@@ -172,7 +165,7 @@ describe("POST /api/search — validation", () => {
     const fullStream = chunks.join("");
 
     expect(fullStream).toContain("STREAMING_URL");
-    expect(fullStream).toContain("SEARCH_COMPLETE");
+    expect(fullStream).toContain("VIBE_COMPLETE");
     expect(fullStream).toContain("streamingUrl");
-  });
+  }, 15000);
 });
