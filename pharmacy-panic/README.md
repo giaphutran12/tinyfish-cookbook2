@@ -54,17 +54,27 @@ Each pharmacy search is handled by a separate TinyFish agent. The agents handle 
 Here's how the app calls TinyFish for each pharmacy:
 
 ```typescript
-const response = await fetch(TINYFISH_SSE_URL, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-    "X-API-Key": process.env.TINYFISH_API_KEY!,
-  },
-  body: JSON.stringify({
-    url: searchUrl,
-    goal: "Extract medicine/health product pricing from this Vietnamese pharmacy website...",
-  }),
+import { TinyFish } from "@tiny-fish/sdk";
+
+const client = new TinyFish({
+  apiKey: process.env.TINYFISH_API_KEY,
+  timeout: 780_000,
+  maxRetries: 0,
 });
+
+const stream = await client.agent.stream({
+  url: searchUrl,
+  goal: "Extract medicine/health product pricing from this Vietnamese pharmacy website...",
+});
+
+for await (const event of stream) {
+  if (event.type === "STREAMING_URL") {
+    console.log(event.streaming_url);
+  }
+  if (event.type === "COMPLETE") {
+    console.log(event.run_id, event.result);
+  }
+}
 ```
 
 The response streams back as Server-Sent Events, with each pharmacy's results arriving as they complete.

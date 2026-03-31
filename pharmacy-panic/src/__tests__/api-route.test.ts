@@ -7,6 +7,32 @@ vi.mock("@/lib/supabase", () => ({
   }),
 }));
 
+const sdkMock = vi.hoisted(() => {
+  const state = {
+    events: [] as Array<Record<string, unknown>>,
+  };
+
+  const stream = vi.fn(async () =>
+    (async function* () {
+      for (const event of state.events) {
+        yield event;
+      }
+    })(),
+  );
+
+  const TinyFish = vi.fn(() => ({
+    agent: {
+      stream,
+    },
+  }));
+
+  return { state, stream, TinyFish };
+});
+
+vi.mock("@tiny-fish/sdk", () => ({
+  TinyFish: sdkMock.TinyFish,
+}));
+
 import { POST } from "@/app/api/search/route";
 
 // ---------------------------------------------------------------------------
@@ -38,6 +64,9 @@ describe("POST /api/search — validation", () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
+    sdkMock.state.events = [];
+    sdkMock.stream.mockClear();
+    sdkMock.TinyFish.mockClear();
   });
 
   afterEach(() => {
@@ -97,9 +126,31 @@ describe("POST /api/search — validation", () => {
 
   it("returns SSE stream with correct headers for valid request", async () => {
     process.env.TINYFISH_API_KEY = "test-key";
-
-    const mockFetch = vi.fn().mockRejectedValue(new Error("mocked network"));
-    vi.stubGlobal("fetch", mockFetch);
+    sdkMock.state.events = [
+      {
+        type: "STARTED",
+        run_id: "run_123",
+        timestamp: "2026-03-31T00:00:00Z",
+      },
+      {
+        type: "STREAMING_URL",
+        run_id: "run_123",
+        streaming_url: "https://stream.example.test/pharmacy",
+        timestamp: "2026-03-31T00:00:01Z",
+      },
+      {
+        type: "COMPLETE",
+        run_id: "run_123",
+        status: "COMPLETED",
+        timestamp: "2026-03-31T00:00:02Z",
+        result: {
+          pharmacy: "Long Châu",
+          search_term: "paracetamol",
+          products: [],
+        },
+        error: null,
+      },
+    ];
 
     const res = await POST(makeRequest({ query: "paracetamol" }));
 
@@ -107,22 +158,57 @@ describe("POST /api/search — validation", () => {
     expect(res.headers.get("Content-Type")).toBe("text/event-stream");
     expect(res.headers.get("Cache-Control")).toBe("no-cache, no-transform");
     expect(res.headers.get("Connection")).toBe("keep-alive");
+    expect(sdkMock.TinyFish).toHaveBeenCalledWith({
+      apiKey: "test-key",
+      timeout: 780000,
+      maxRetries: 0,
+    });
     if (res.body) {
       const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      const chunks: string[] = [];
       while (true) {
-        const { done } = await reader.read();
+        const { done, value } = await reader.read();
         if (done) break;
+        if (value) {
+          chunks.push(decoder.decode(value, { stream: true }));
+        }
       }
+      const fullStream = chunks.join("");
+      expect(fullStream).toContain("STREAMING_URL");
+      expect(fullStream).toContain("PHARMACY_RESULT");
+      expect(fullStream).toContain("SEARCH_COMPLETE");
+      expect(fullStream).toContain("https://stream.example.test/pharmacy");
     }
-
-    vi.unstubAllGlobals();
   });
 
   it("SSE stream contains SEARCH_COMPLETE event on valid request", async () => {
     process.env.TINYFISH_API_KEY = "test-key";
-
-    const mockFetch = vi.fn().mockRejectedValue(new Error("mocked network"));
-    vi.stubGlobal("fetch", mockFetch);
+    sdkMock.state.events = [
+      {
+        type: "STARTED",
+        run_id: "run_456",
+        timestamp: "2026-03-31T00:00:00Z",
+      },
+      {
+        type: "STREAMING_URL",
+        run_id: "run_456",
+        streaming_url: "https://stream.example.test/pharmacy-2",
+        timestamp: "2026-03-31T00:00:01Z",
+      },
+      {
+        type: "COMPLETE",
+        run_id: "run_456",
+        status: "COMPLETED",
+        timestamp: "2026-03-31T00:00:02Z",
+        result: {
+          pharmacy: "Pharmacity",
+          search_term: "paracetamol",
+          products: [],
+        },
+        error: null,
+      },
+    ];
 
     const res = await POST(makeRequest({ query: "paracetamol" }));
     expect(res.status).toBe(200);
@@ -141,7 +227,5 @@ describe("POST /api/search — validation", () => {
     const fullStream = chunks.join("");
 
     expect(fullStream).toContain("SEARCH_COMPLETE");
-
-    vi.unstubAllGlobals();
   });
 });

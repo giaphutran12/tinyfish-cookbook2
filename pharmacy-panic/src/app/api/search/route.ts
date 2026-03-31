@@ -1,6 +1,7 @@
 export const runtime = "nodejs";
 export const maxDuration = 800; // Vercel Pro allows up to 800s for Node.js runtime
 
+import { TinyFish } from "@tiny-fish/sdk";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { normalizePharmacyResult, isEmptyResult } from "@/lib/normalize";
 import type { PharmacyResult } from "@/lib/types";
@@ -10,7 +11,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // Constants
 // ---------------------------------------------------------------------------
 
-const TINYFISH_SSE_URL = "https://agent.tinyfish.ai/v1/automation/run-sse";
 const REQUEST_TIMEOUT_MS = 780_000;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
@@ -96,14 +96,6 @@ Use error values: "no_results" if the page says no products found, "blocked" if 
 // ---------------------------------------------------------------------------
 
 type SearchBody = { query: string; useCache?: boolean };
-
-type TinyFishEvent = {
-  type?: string;
-  status?: string;
-  result?: unknown;
-  streaming_url?: string;
-  run_id?: string;
-};
 
 interface CacheRow {
   pharmacy: string;
@@ -202,67 +194,34 @@ async function runTinyFishSseForSite(
   const startedAt = Date.now();
   console.log(`[PHARMACY] Starting scrape: ${siteKey} → ${url}`);
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
   try {
-    const response = await fetch(TINYFISH_SSE_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
-        "X-API-Key": apiKey,
-      },
-      body: JSON.stringify({ url, goal: GOAL_PROMPT }),
-      signal: controller.signal,
+    const client = new TinyFish({
+      apiKey,
+      timeout: REQUEST_TIMEOUT_MS,
+      maxRetries: 0,
+    });
+    const stream = await client.agent.stream({
+      url,
+      goal: GOAL_PROMPT,
     });
 
-    if (!response.ok) {
-      throw new Error(`TinyFish request failed (${response.status})`);
-    }
-
-    if (!response.body) {
-      throw new Error("TinyFish response body is empty");
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
     let resultJson: unknown;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    for await (const event of stream) {
+      if (event.type === "STREAMING_URL" && event.streaming_url) {
+        console.log(
+          `[PHARMACY] streamingUrl for ${siteKey}:`,
+          event.streaming_url,
+        );
+        enqueue({
+          type: "STREAMING_URL",
+          siteUrl: url,
+          streamingUrl: event.streaming_url,
+        });
+      }
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-
-        let event: TinyFishEvent;
-        try {
-          event = JSON.parse(line.slice(6));
-        } catch {
-          continue;
-        }
-
-        if (event.streaming_url) {
-          console.log(
-            `[PHARMACY] streamingUrl for ${siteKey}:`,
-            event.streaming_url,
-          );
-          enqueue({
-            type: "STREAMING_URL",
-            siteUrl: url,
-            streamingUrl: event.streaming_url,
-          });
-        }
-
-        if (event.type === "COMPLETE" && event.status === "COMPLETED") {
-          resultJson = event.result;
-        }
+      if (event.type === "COMPLETE" && event.status === "COMPLETED") {
+        resultJson = event.result;
       }
     }
 
@@ -292,8 +251,6 @@ async function runTinyFishSseForSite(
   } catch (error) {
     console.error(`[PHARMACY] Failed: ${siteKey}`, error);
     return false;
-  } finally {
-    clearTimeout(timeoutId);
   }
 }
 
