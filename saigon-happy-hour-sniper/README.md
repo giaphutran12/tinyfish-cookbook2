@@ -98,8 +98,8 @@ The `GOAL_PROMPT` tells TinyFish exactly what to extract: deal name, type, days/
 ## Running locally
 
 ```bash
-git clone https://github.com/giaphutran12/tinyfish-cookbook2.git
-cd tinyfish-cookbook2/saigon-happy-hour-sniper
+git clone https://github.com/tinyfish-io/tinyfish-cookbook.git
+cd tinyfish-cookbook/saigon-happy-hour-sniper
 npm install
 ```
 
