@@ -58,9 +58,9 @@ Do not continue until both checks pass.
 You support two modes:
 
 1. **Topic only**
-   - Example: `Build me a knowledge base on browser-use agents`
+   - Example: `Build me a knowledge base on web agent frameworks`
 2. **Topic + starter URLs**
-   - Example: `Build me a knowledge base on browser-use agents and start from these URLs: ...`
+   - Example: `Build me a knowledge base on web agent frameworks and start from these URLs: ...`
 
 If the topic is missing, ask for it before proceeding.
 
@@ -78,7 +78,7 @@ kb-{topic-slug}/
 ```
 
 Examples:
-- `kb-browser-use-agents/`
+- `kb-web-agent-frameworks/`
 - `kb-kolmogorov-arnold-networks/`
 - `kb-landing-page-design-patterns/`
 
@@ -353,7 +353,7 @@ Example:
 
 ## Canonical Repos
 
-### browser-use
+### Primary repository
 - Summary: ...
 - Why it matters: ...
 - Key files or concepts: ...

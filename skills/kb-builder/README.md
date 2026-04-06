@@ -3,7 +3,7 @@
 **Build an Obsidian-ready knowledge base from the live web.**
 
 Ask your coding agent things like:
-- *"Build me a knowledge base on browser-use agents"*
+- *"Build me a knowledge base on web agent frameworks"*
 - *"Build me a knowledge base on Kolmogorov-Arnold Networks"*
 - *"Build me a knowledge base on landing page design patterns, start from these URLs..."*
 
