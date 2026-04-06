@@ -5,13 +5,14 @@ description: >
   Use this skill when a user wants a builder-grade markdown knowledge base on a technical topic,
   asks for a structured research vault, or wants a topic compiled from live public sources into
   interlinked markdown files. Supports two input modes: topic only, or topic plus starter URLs.
-  Always generates index.md and sources.md. Creates additional files only when the evidence supports
-  them. Uses explicit tinyfish agent run commands and public web sources only.
+  Supports both first-build and update workflows. Always generates index.md, sources.md, audit.md,
+  and manifest.json. Creates additional files only when the evidence supports them. Uses explicit
+  tinyfish agent run commands and public web sources only.
 compatibility:
   tools: [tinyfish]
 metadata:
   author: edwardtran777
-  version: "0.1"
+  version: "0.2"
   tags: knowledge-base markdown obsidian research tinyfish builders web-ingestion
 ---
 
@@ -21,7 +22,7 @@ Build a topic-specific markdown knowledge base by using TinyFish to browse publi
 
 This skill is for **builder knowledge bases**, not personal journals and not direct code generation.
 
-The output is a folder you can drop into Obsidian immediately.
+The output is a folder you can drop into Obsidian immediately, and update later without starting over.
 
 ## Pre-flight check
 
@@ -51,7 +52,7 @@ Do not continue until both checks pass.
 - **Allowed:** public web pages, public GitHub repos, public papers, public docs, public datasets, public blog posts
 - **Not allowed:** private sources, local private files, authenticated dashboards, chat logs, email, Slack, or anything the user cannot access publicly
 - **Primitive:** use explicit `tinyfish agent run` commands
-- **Output shape:** always `index.md` and `sources.md`; everything else is dynamic
+- **Output shape:** always `index.md`, `sources.md`, `audit.md`, and `manifest.json`; everything else is dynamic
 
 ## Input modes
 
@@ -61,6 +62,8 @@ You support two modes:
    - Example: `Build me a knowledge base on web agent frameworks`
 2. **Topic + starter URLs**
    - Example: `Build me a knowledge base on web agent frameworks and start from these URLs: ...`
+3. **Update an existing KB**
+   - Example: `Update my knowledge base on Kolmogorov-Arnold Networks with these new URLs: ...`
 
 If the topic is missing, ask for it before proceeding.
 
@@ -68,6 +71,8 @@ If starter URLs are present:
 - use them first
 - deduplicate them
 - keep only public URLs
+
+If the user explicitly says `update`, `refresh`, `add these sources`, or clearly wants to add to an existing KB, switch into update mode.
 
 ## Output directory
 
@@ -96,6 +101,7 @@ This file is always required. It should contain:
 ### `sources.md`
 
 This file is always required. It should log **every URL visited** with:
+- stable source ID
 - timestamp
 - URL
 - source label
@@ -103,6 +109,68 @@ This file is always required. It should log **every URL visited** with:
 - result status: useful, partial, irrelevant, blocked, or conflicting
 
 Use ISO 8601 timestamps.
+
+Each source entry must use a stable source ID such as `S001`, `S002`, `S003`.
+
+Example:
+
+```markdown
+## [S001] 2026-04-06T08:49:24.014Z | useful
+
+- URL: https://example.com
+- Label: Official docs
+- Reason opened: discovery pass for {TOPIC}
+- Notes: yielded 4 good follow-up links
+```
+
+### `audit.md`
+
+This file is always required. It is the trust layer for the KB.
+
+It must contain four sections:
+
+- `FOUND`
+- `INFERRED`
+- `CONFLICTING`
+- `MISSING`
+
+Example:
+
+```markdown
+# Audit
+
+## FOUND
+- [FOUND | S003] Pikachu is an Electric-type Mouse Pokemon.
+
+## INFERRED
+- [INFERRED | S003,S004] Pikachu's mascot role is reinforced across both official canon and encyclopedia framing.
+
+## CONFLICTING
+- [CONFLICTING | S004,S009] Source A says X while source B frames Y.
+
+## MISSING
+- [MISSING] No dedicated benchmark source was read in this run.
+```
+
+Rules:
+
+- `FOUND` requires at least one direct source ID
+- `INFERRED` should usually reference at least two source IDs
+- `CONFLICTING` must name the disagreement explicitly
+- `MISSING` should be used whenever the KB lacks evidence rather than hand-waving
+
+### `manifest.json`
+
+This file is always required. It stores:
+
+- topic
+- topic slug
+- build or update mode
+- created timestamp
+- last updated timestamp
+- page list
+- run history
+- simple run bookkeeping like URLs visited and pages generated
 
 ## Dynamic files
 
@@ -126,6 +194,7 @@ Rules:
 - if it does not, skip it
 - do not create empty placeholder files
 - if a category only has 1-2 minor findings, fold it into `index.md` instead
+- create `updates.md` when the KB is refreshed in update mode
 
 All generated markdown files should use `[[wikilinks]]` when linking to other local pages.
 
@@ -144,12 +213,34 @@ Do not ask one TinyFish agent to cover multiple independent sites in a single co
 
 Run independent URLs in parallel where possible using background jobs and `wait`.
 
+## Step 0 — Decide build mode
+
+Determine whether this run is:
+
+- `build` — creating a KB from scratch
+- `update` — adding or refreshing sources in an existing KB
+
+Use `update` mode when:
+
+- the user explicitly says update or refresh
+- the target KB folder already exists and the user's intent is additive
+
+In update mode:
+
+- read the existing `index.md`
+- read the existing `sources.md`
+- read the existing `audit.md`
+- read the existing `manifest.json`
+- do not renumber old source IDs
+- only rewrite the pages whose evidence changed
+
 ## Step 1 — Normalize the task
 
 Write down:
 - `TOPIC`
 - `TOPIC_SLUG`
 - `STARTER_URLS` if provided
+- `MODE` = `build` or `update`
 
 Keep the topic human-readable in the markdown output.
 
@@ -280,19 +371,43 @@ wait
 
 Before writing the synthesis pages, update `sources.md` with every visited URL.
 
-Each entry should include:
+In build mode:
+- start source IDs at `S001`
 
-```markdown
-## 2026-04-06T08:30:00Z | useful
-- URL: https://example.com
-- Label: Official docs
-- Reason opened: discovery pass for {TOPIC}
-- Notes: yielded 4 good follow-up links
-```
+In update mode:
+- read the highest existing source ID
+- continue numbering from there
 
 Use one section per visited page. Do not skip failed or low-value pages.
 
-## Step 6 — Decide the page set
+## Step 6 — Build the audit trail
+
+Before or while writing the content pages, classify important claims into:
+
+- `FOUND`
+- `INFERRED`
+- `CONFLICTING`
+- `MISSING`
+
+Use these rules:
+
+- `FOUND` = directly supported by one or more sources
+- `INFERRED` = synthesis across sources or a careful deduction
+- `CONFLICTING` = sources disagree or frame something differently
+- `MISSING` = the KB does not have enough evidence
+
+The audit file is required even if it is short.
+
+For especially important claims in topic pages, you may add inline markers like:
+
+```markdown
+- [FOUND | S003] ...
+- [INFERRED | S003,S004] ...
+```
+
+Use them sparingly. Do not turn every line into metadata noise.
+
+## Step 7 — Decide the page set
 
 Create the optional pages based on the actual evidence you found.
 
@@ -307,7 +422,7 @@ If the topic does **not** have a category, skip that file.
 
 Do not create a research-shaped output for topics that are not research-shaped.
 
-## Step 7 — Write the knowledge base
+## Step 8 — Write the knowledge base
 
 Write clean markdown. Keep it skimmable and builder-friendly.
 
@@ -337,6 +452,15 @@ Use this pattern:
 - [[sources]]
 ```
 
+In update mode, add a short section such as:
+
+```markdown
+## This Run
+- Mode: update
+- Updated pages: [[papers]], [[docs]]
+- See also: [[updates]]
+```
+
 ### Optional page structure
 
 Each optional page should:
@@ -361,12 +485,45 @@ Example:
 - Source: [GitHub](https://github.com/...)
 ```
 
-## Step 8 — Quality rules
+### `updates.md` structure
+
+Create this file only in update mode, or append to it if it already exists.
+
+Pattern:
+
+```markdown
+# Updates
+
+## Run 2 | 2026-04-08T10:11:00Z
+
+- Added sources: [S007], [S008]
+- Updated pages: [[papers]], [[docs]]
+- New confirmed claims:
+  - [FOUND | S008] ...
+- Open conflicts:
+  - [CONFLICTING | S004,S008] ...
+```
+
+### `manifest.json` structure
+
+At minimum, store:
+
+- `topic`
+- `topic_slug`
+- `mode`
+- `created_at`
+- `last_updated_at`
+- `pages`
+- `runs`
+
+Append a new run entry on each build or update.
+
+## Step 9 — Quality rules
 
 Always follow these rules:
 
 - public web only
-- `index.md` and `sources.md` are mandatory
+- `index.md`, `sources.md`, `audit.md`, and `manifest.json` are mandatory
 - all other files are evidence-driven
 - use `[[wikilinks]]` for local page references
 - keep filenames simple and lowercase
@@ -374,6 +531,7 @@ Always follow these rules:
 - if a source conflicts with another source, say so explicitly
 - if a source is weak, say so explicitly
 - if you cannot access a page or it is thin, record that in `sources.md`
+- if the KB is being updated, do not destroy prior valid work just because new sources were added
 
 ## Parallelism rule
 
@@ -412,6 +570,7 @@ At the end, report:
 - output folder path
 - files created
 - number of URLs visited
+- mode: build or update
 - any important gaps or blocked sources
 
 Use a concise summary like:
@@ -419,6 +578,7 @@ Use a concise summary like:
 ```text
 KB Builder complete for {TOPIC}
 Output: kb-{topic-slug}/
+Mode: {MODE}
 Files: index.md, sources.md, ...
 URLs visited: 11
 Open gaps: benchmarks unclear, no public dataset page found
