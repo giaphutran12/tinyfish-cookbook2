@@ -8,12 +8,6 @@ description: >
   Supports both first-build and update workflows. Always generates index.md, sources.md, audit.md,
   and manifest.json. Creates additional files only when the evidence supports them. Uses explicit
   tinyfish agent run commands and public web sources only.
-compatibility:
-  tools: [tinyfish]
-metadata:
-  author: edwardtran777
-  version: "0.2"
-  tags: knowledge-base markdown obsidian research tinyfish builders web-ingestion
 ---
 
 # KB Builder
