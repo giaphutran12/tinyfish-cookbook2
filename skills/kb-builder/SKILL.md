@@ -237,6 +237,25 @@ Trace mode exception:
 - files under `_trace/` are debugging artifacts, not user-facing KB pages
 - do not clutter `index.md` with `_trace/` links unless the user explicitly asks
 
+## TinyFish prompt design
+
+Keep TinyFish prompts short, concrete, and single-purpose.
+
+Do not paste giant schema walls or long branchy instructions into the prompt if a shorter version would do the job. In some TinyFish surfaces, long prompts may be rewritten or reframed into a vague navigation task, which increases latency and can drift the result away from the requested extraction.
+
+Prompt rules:
+- prefer 5-10 short fields over 15-20 fields
+- prefer one clear task over many conditional branches
+- prefer compact JSON shapes
+- prefer page-local extraction over cross-site browsing instructions
+- if a page needs special handling, say that in one short sentence
+
+Good:
+- \"Read this page. Return JSON with title, canonicalUrl, sourceType, shortSummary, keyFindings, whyItMatters, evidenceQuality, limitations.\"
+
+Bad:
+- giant prompts that try to fully specify papers, repos, docs, datasets, benchmarks, caveats, page routing, and formatting policy all at once
+
 ## Operating model
 
 Use a **two-pass workflow**:
@@ -251,6 +270,12 @@ Use **one TinyFish run per URL**.
 Do not ask one TinyFish agent to cover multiple independent sites in a single command.
 
 Run independent URLs in parallel where possible using background jobs and `wait`.
+
+Critical separation:
+- the discovery pass is allowed to discover follow-up URLs from the current page
+- the reading pass is not discovery
+- the reading pass must extract from exactly one target page and return one structured result for that page
+- never ask a reading-pass prompt to navigate to other pages, discover more URLs, or summarize multiple sources
 
 ## Step 0 — Decide build mode
 
@@ -293,6 +318,10 @@ Keep the topic human-readable in the markdown output.
 If the user gave starter URLs:
 - start with those
 
+If a starter URL is a direct arXiv paper page such as `/abs/...`, `/pdf/...`, or an arXiv HTML render:
+- treat it as a **reading target**
+- do not send it through the discovery-search workflow first
+
 Then expand with a small set of public discovery URLs relevant to the topic. Choose from these patterns when relevant:
 
 - GitHub repo search:
@@ -320,6 +349,21 @@ Only include discovery URLs that are likely to produce useful public results.
 
 Aim for 4-8 discovery URLs in the first pass, not 20.
 
+Always reserve **one extra discovery slot** for a trusted-source scout that is not limited to the template list above.
+
+Trusted-source scout rule:
+- run one extra discovery agent against a general search page for the topic
+- use a public search engine results page that TinyFish can access reliably in the current environment
+- do not hardcode or prefer a specific search engine unless the user explicitly asks for one
+- the scout's job is to find **trusted primary sources outside the template list**, not to repeat GitHub/arXiv/Hugging Face results you already have
+- trusted sources include official product docs, official company or lab pages, standards bodies, top conference project pages, official benchmark sites, and strong primary-source blog posts from recognized builders or research groups
+- do not promote SEO sludge, low-signal affiliate lists, or derivative summaries unless they are the only path to a stronger primary source
+
+Important:
+- arXiv search pages are valid discovery URLs when papers matter for the topic
+- they are often slower than GitHub or DuckDuckGo discovery pages
+- do **not** drop arXiv just because it is the slowest source in the batch
+
 When selecting discovery and reading targets, prefer sources that improve understanding, not just coverage:
 
 - canonical or foundational sources
@@ -338,27 +382,47 @@ Command template:
 ```bash
 tinyfish agent run --sync --url "{DISCOVERY_URL}" \
   "You are helping build a markdown knowledge base on '{TOPIC}'.
-   Read this page and identify up to 5 high-value public URLs worth following.
-   Prefer official docs, canonical GitHub repos, papers, datasets, benchmarks, and
-   high-signal tutorials or explainers.
-   Return JSON:
-   {
-     \"candidates\": [
-       {
-         \"title\": \"\",
-         \"url\": \"\",
-         \"sourceType\": \"docs|repo|paper|dataset|article|benchmark|person|other\",
-         \"whyItMatters\": \"\"
-       }
-     ]
-   }
+   Read only this page.
+   Return JSON with:
+   {\"candidates\":[{\"title\":\"\",\"url\":\"\",\"sourceType\":\"docs|repo|paper|dataset|article|benchmark|person|other\",\"whyItMatters\":\"\"}]}
    Rules:
    - public URLs only
    - max 5 candidates
+   - prefer official docs, canonical repos, papers, datasets, benchmarks, and strong explainers
    - do not guess URLs
-   - if nothing useful is found, return an empty array" \
+   - if nothing useful is found, return {\"candidates\":[]}" \
   > /tmp/kb_discovery_{SAFE_NAME}.json &
 ```
+
+Trusted-source scout template:
+
+```bash
+tinyfish agent run --sync --url "{GENERAL_SEARCH_URL}" \
+  "You are helping build a markdown knowledge base on '{TOPIC}'.
+   Read only this results page.
+   Find up to 5 trusted sources NOT already covered by the template discovery URLs.
+   Return JSON with:
+   {\"candidates\":[{\"title\":\"\",\"url\":\"\",\"sourceType\":\"docs|repo|paper|dataset|article|benchmark|person|other\",\"whyItMatters\":\"\",\"whyTrusted\":\"\"}]}
+   Rules:
+   - public URLs only
+   - max 5 candidates
+   - prefer official docs, labs, standards bodies, benchmark sites, and primary-source explainers
+   - do not guess URLs
+   - avoid low-signal SEO pages unless they lead to a stronger primary source
+   - if nothing strong is found, return {\"candidates\":[]}" \
+  > /tmp/kb_discovery_trusted_{SAFE_NAME}.json &
+```
+
+Important runtime behavior:
+- when you redirect TinyFish output to a file with `> /tmp/...json`, that file may stay `0` bytes until the run exits
+- a zero-byte discovery file does **not** mean the run is stuck
+- arXiv search pages often finish later than GitHub or DuckDuckGo pages in the same batch
+- if the rest of the batch finishes first, keep waiting for arXiv before declaring failure
+
+Timeout rule:
+- allow up to **10 minutes** for a single discovery run before marking it `partial` or `blocked`
+- for arXiv discovery specifically, assume 1-3 minutes is normal and keep waiting
+- only intervene early if the process is clearly gone or has already produced a terminal TinyFish error
 
 After launching all discovery runs:
 
@@ -366,21 +430,33 @@ After launching all discovery runs:
 wait
 ```
 
+Interpretation rule:
+- `wait` finishing slowly because one arXiv process is still running is expected behavior
+- do not kill the arXiv run just because the other files finished first
+- only treat the batch as stalled if an individual discovery run exceeds the 10-minute timeout above
+
 If `TRACE=true`, copy or save the raw discovery outputs into `_trace/` with readable names such as:
 
 - `_trace/discovery-github.json`
 - `_trace/discovery-arxiv.json`
 - `_trace/discovery-ddg.json`
+- `_trace/discovery-trusted-scout.json`
 
 Then read all discovery outputs, merge them, deduplicate by URL, and choose the best 6-12 URLs for the reading pass.
 
+Trusted-source promotion rule:
+- if the trusted-source scout finds credible primary sources not already covered by the template list, promote the best 1-5 of them into the reading pass
+- run one TinyFish reading pass per promoted source, in parallel with the rest of the batch
+- if the scout only finds weaker or duplicative sources, keep them out of the reading pass and record them as low-value or skipped in `sources.md` only if you actually opened them
+
 Selection priority:
 1. official documentation
-2. canonical GitHub repositories
-3. arXiv papers
-4. Hugging Face model or dataset pages
-5. strong blog posts or tutorials
-6. benchmark or leaderboard pages
+2. trusted non-template primary sources from the scout
+3. canonical GitHub repositories
+4. arXiv papers
+5. Hugging Face model or dataset pages
+6. strong blog posts or tutorials
+7. benchmark or leaderboard pages
 
 By default, do **not** spend your budget on social posts, Reddit threads, or generic chatter unless the user explicitly asks for them.
 
@@ -388,41 +464,41 @@ By default, do **not** spend your budget on social posts, Reddit threads, or gen
 
 Run one TinyFish agent per chosen URL.
 
+Reading-pass rules:
+- one URL in, one structured result out
+- do not ask TinyFish to browse beyond the target page
+- do not ask TinyFish to find more sources during reading
+- do not use phrases like `navigate to each source page`, `follow links`, `visit multiple pages`, or `discover`
+- if the source links to useful follow-ups, record them under `importantLinks`, but keep the run scoped to the current page only
+
 Command template:
 
 ```bash
 tinyfish agent run --sync --url "{TARGET_URL}" \
   "You are extracting evidence for a markdown knowledge base on '{TOPIC}'.
-   Read this source carefully and return structured JSON.
-   Extract:
-   - title
-   - canonicalUrl
-   - sourceType
-   - shortSummary
-   - keyFindings: up to 7 bullets
-   - whyItMatters
-   - foundationality: foundational|important|derivative|unclear
-   - approachOrSchool: the main approach, camp, or framing this source represents
-   - whatThisChanges: one line on how this source changes the reader's understanding
-   - importantEntities: people, projects, libraries, datasets, papers, companies
-   - importantLinks: up to 5 URLs mentioned or linked from the page
-   - suggestedPages: page names this should contribute to, e.g. [\"repos\", \"papers\", \"docs\", \"articles\", \"benchmarks\"]
-   - evidenceQuality: high|medium|low
-   - limitations: things this page did not answer
-   If this is a GitHub repository:
-   - inspect the README
-   - inspect up to 3 important files or folders if they are clearly relevant
-   - include key files or folders under keyFindings
-   If this is a paper:
-   - extract the title, abstract-level contribution, and 3-5 implementation-relevant points
-   If this is documentation:
-   - extract concepts, APIs, workflows, and caveats
-   If this is a dataset or model page:
-   - extract task, modality, schema if visible, and usage constraints
-   Also extract:
-   - what this source says that is actually important
-   - what this source does NOT resolve
-   Return JSON only.
+   Read only this page and return JSON only.
+   Use this shape:
+   {
+     \"title\":\"\",
+     \"canonicalUrl\":\"\",
+     \"sourceType\":\"\",
+     \"shortSummary\":\"\",
+     \"keyFindings\":[\"\"],
+     \"whyItMatters\":\"\",
+     \"foundationality\":\"foundational|important|derivative|unclear\",
+     \"approachOrSchool\":\"\",
+     \"whatThisChanges\":\"\",
+     \"importantEntities\":[\"\"],
+     \"importantLinks\":[\"\"],
+     \"suggestedPages\":[\"papers|repos|docs|articles|datasets|benchmarks|people|glossary|timeline|landscape|reading-order|disagreements|what-matters\"],
+     \"evidenceQuality\":\"high|medium|low\",
+     \"limitations\":[\"\"]
+   }
+   Add one short type-specific note when relevant:
+   - repo: inspect README and up to 3 clearly relevant files or folders
+   - paper: include abstract-level contribution and 3-5 implementation-relevant points
+   - docs: include workflows, concepts, and caveats
+   - dataset or model page: include task, modality, schema if visible, and usage constraints
    Do not invent facts. If something is missing, say it is missing." \
   > /tmp/kb_read_{SAFE_NAME}.json &
 ```
@@ -564,6 +640,12 @@ Use this pattern:
 - [[sources]]
 ```
 
+Reading-order rule:
+- the default reading order is for the KB itself, not the external source list
+- point the reader to local pages first, using `[[wikilinks]]`
+- if useful, add a short subsection like `## If You Want The Sources` with the strongest external URLs in order
+- the KB should save the reader from having to read the raw papers unless they want to go deeper
+
 In update mode, add a short section such as:
 
 ```markdown
@@ -658,9 +740,14 @@ Always follow these rules:
 Good:
 - one TinyFish run per URL
 - many URLs in parallel
+- letting slow arXiv discovery runs finish when they are still within the 10-minute timeout
+- one extra trusted-source scout in parallel with the template discovery runs
 
 Bad:
 - one TinyFish run told to visit GitHub, arXiv, and Hugging Face all in a single goal
+- treating a zero-byte redirected output file as proof that TinyFish is stuck
+- killing arXiv discovery after 60-120 seconds just because faster sources finished first
+- blindly trusting the template list and missing a stronger official source found by the scout
 
 ## Edge cases
 
