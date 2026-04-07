@@ -7,14 +7,25 @@ Ask your coding agent things like:
 - *"Build me a knowledge base on Kolmogorov-Arnold Networks"*
 - *"Build me a knowledge base on landing page design patterns, start from these URLs..."*
 - *"Update my KAN knowledge base with these 3 new URLs"*
+- *"Build me a knowledge base on browser agents --trace"*
 
 The agent uses TinyFish's web agent to visit public sources, extract the highest-signal information, and write a clean markdown vault with `[[wikilinks]]`.
+
+The goal is not just to summarize sources. The skill is meant to synthesize the field:
+
+- what the core mental model is
+- what actually matters
+- what the main approaches are
+- what is foundational vs derivative
+- what is still unresolved
+- what to read first if you want real understanding
 
 ## Input modes
 
 - **Topic only** — the agent starts from search and hub pages
 - **Topic + starter URLs** — the agent uses your URLs first, then expands from there
 - **Update an existing KB** — the agent adds new sources into an existing vault instead of rebuilding blindly
+- **Optional trace mode** — `--trace` saves raw TinyFish outputs in `_trace/` for debugging and deeper inspection
 
 ## Output
 
@@ -34,6 +45,7 @@ Generated only when relevant:
 - `people.md`
 - other topic-specific markdown files
 - `updates.md` when the KB is refreshed
+- `_trace/` only when `--trace` is used
 
 ## Requirements
 
@@ -50,6 +62,8 @@ Generated only when relevant:
 - Honest logging of every visited URL in `sources.md`
 - Honest audit trail with `FOUND`, `INFERRED`, `CONFLICTING`, and `MISSING`
 - Update mode for refreshing an existing KB with new sources
+- Stronger synthesis defaults so the KB feels like understanding, not just summaries
+- Optional trace mode when you want raw TinyFish responses for inspection
 
 ## Built for
 
