@@ -8,7 +8,8 @@ description: >
   Supports both first-build and update workflows. Always generates index.md, sources.md, audit.md,
   and manifest.json. Creates additional files only when the evidence supports them. The output must
   synthesize the topic into a usable mental model, not just summarize pages. Uses explicit
-  tinyfish agent run commands and public web sources only.
+  tinyfish agent run commands and public web sources only. Optional `--trace` mode saves raw
+  TinyFish outputs under `_trace/` for debugging.
 ---
 
 # KB Builder
@@ -74,6 +75,8 @@ You support two modes:
    - Example: `Build me a knowledge base on web agent frameworks and start from these URLs: ...`
 3. **Update an existing KB**
    - Example: `Update my knowledge base on Kolmogorov-Arnold Networks with these new URLs: ...`
+4. **Trace mode**
+   - Example: `Build me a knowledge base on browser agents --trace`
 
 If the topic is missing, ask for it before proceeding.
 
@@ -83,6 +86,11 @@ If starter URLs are present:
 - keep only public URLs
 
 If the user explicitly says `update`, `refresh`, `add these sources`, or clearly wants to add to an existing KB, switch into update mode.
+
+If the user includes `--trace`, `trace`, `debug`, or explicitly asks for raw outputs:
+- enable trace mode
+- save raw TinyFish outputs under `_trace/`
+- keep `_trace/` out of the main page navigation unless the user asks for it
 
 ## Output directory
 
@@ -96,6 +104,12 @@ Examples:
 - `kb-web-agent-frameworks/`
 - `kb-kolmogorov-arnold-networks/`
 - `kb-landing-page-design-patterns/`
+
+When trace mode is enabled, also create:
+
+```text
+kb-{topic-slug}/_trace/
+```
 
 ## Always-generated files
 
@@ -184,6 +198,7 @@ This file is always required. It stores:
 - page list
 - run history
 - simple run bookkeeping like URLs visited and pages generated
+- whether trace mode was enabled
 
 ## Dynamic files
 
@@ -218,6 +233,10 @@ Rules:
 
 All generated markdown files should use `[[wikilinks]]` when linking to other local pages.
 
+Trace mode exception:
+- files under `_trace/` are debugging artifacts, not user-facing KB pages
+- do not clutter `index.md` with `_trace/` links unless the user explicitly asks
+
 ## Operating model
 
 Use a **two-pass workflow**:
@@ -240,6 +259,10 @@ Determine whether this run is:
 - `build` — creating a KB from scratch
 - `update` — adding or refreshing sources in an existing KB
 
+Also determine:
+
+- `TRACE` = `true` or `false`
+
 Use `update` mode when:
 
 - the user explicitly says update or refresh
@@ -261,6 +284,7 @@ Write down:
 - `TOPIC_SLUG`
 - `STARTER_URLS` if provided
 - `MODE` = `build` or `update`
+- `TRACE` = `true` or `false`
 
 Keep the topic human-readable in the markdown output.
 
@@ -342,6 +366,12 @@ After launching all discovery runs:
 wait
 ```
 
+If `TRACE=true`, copy or save the raw discovery outputs into `_trace/` with readable names such as:
+
+- `_trace/discovery-github.json`
+- `_trace/discovery-arxiv.json`
+- `_trace/discovery-ddg.json`
+
 Then read all discovery outputs, merge them, deduplicate by URL, and choose the best 6-12 URLs for the reading pass.
 
 Selection priority:
@@ -402,6 +432,14 @@ After launching all reading runs:
 ```bash
 wait
 ```
+
+If `TRACE=true`, save the raw reading outputs into `_trace/` as well, for example:
+
+- `_trace/read-paper.json`
+- `_trace/read-repo-main.json`
+- `_trace/read-docs.json`
+
+Do not summarize `_trace/` into the main KB pages. It exists for inspection, debugging, and trust when needed.
 
 ## Step 5 — Log all sources immediately
 
@@ -587,6 +625,7 @@ At minimum, store:
 - `topic`
 - `topic_slug`
 - `mode`
+- `trace`
 - `created_at`
 - `last_updated_at`
 - `pages`
@@ -612,6 +651,7 @@ Always follow these rules:
 - every major page should answer "why does this matter?" not only "what is this?"
 - if multiple sources restate the same point, compress them into one synthesized claim instead of duplicating summaries
 - include a reading path for the strongest or most foundational sources when the topic is broad
+- raw TinyFish outputs should only be stored when trace mode is requested
 
 ## Parallelism rule
 
@@ -651,6 +691,7 @@ At the end, report:
 - files created
 - number of URLs visited
 - mode: build or update
+- trace: on or off
 - any important gaps or blocked sources
 
 Use a concise summary like:
@@ -659,6 +700,7 @@ Use a concise summary like:
 KB Builder complete for {TOPIC}
 Output: kb-{topic-slug}/
 Mode: {MODE}
+Trace: {TRACE}
 Files: index.md, sources.md, ...
 URLs visited: 11
 Open gaps: benchmarks unclear, no public dataset page found
