@@ -6,7 +6,8 @@ description: >
   asks for a structured research vault, or wants a topic compiled from live public sources into
   interlinked markdown files. Supports two input modes: topic only, or topic plus starter URLs.
   Supports both first-build and update workflows. Always generates index.md, sources.md, audit.md,
-  and manifest.json. Creates additional files only when the evidence supports them. Uses explicit
+  and manifest.json. Creates additional files only when the evidence supports them. The output must
+  synthesize the topic into a usable mental model, not just summarize pages. Uses explicit
   tinyfish agent run commands and public web sources only.
 ---
 
@@ -17,6 +18,21 @@ Build a topic-specific markdown knowledge base by using TinyFish to browse publi
 This skill is for **builder knowledge bases**, not personal journals and not direct code generation.
 
 The output is a folder you can drop into Obsidian immediately, and update later without starting over.
+
+## Core principle
+
+Do not produce a pile of source summaries.
+
+The KB should help the reader understand:
+
+- the core mental model
+- the main approaches or schools of thought
+- what is foundational vs derivative
+- what actually matters
+- what is unresolved
+- what to read first if they want genuine understanding
+
+If the output only says what each source said, the skill has failed.
 
 ## Pre-flight check
 
@@ -91,6 +107,9 @@ This file is always required. It should contain:
 - a list of generated pages using `[[wikilinks]]`
 - 3-7 key takeaways
 - open questions or evidence gaps
+- a **mental model** section
+- a **what matters** section
+- a **reading order** section for the strongest sources or pages
 
 ### `sources.md`
 
@@ -182,6 +201,10 @@ Common examples:
 - `people.md`
 - `glossary.md`
 - `timeline.md`
+- `landscape.md`
+- `reading-order.md`
+- `disagreements.md`
+- `what-matters.md`
 
 Rules:
 - if a category has meaningful evidence, create its file
@@ -189,6 +212,9 @@ Rules:
 - do not create empty placeholder files
 - if a category only has 1-2 minor findings, fold it into `index.md` instead
 - create `updates.md` when the KB is refreshed in update mode
+- if the topic is broad enough to have multiple camps, phases, or implementation styles, create `landscape.md`
+- if the sources disagree in meaningful ways, create `disagreements.md`
+- if the reader would benefit from a guided path, create `reading-order.md`
 
 All generated markdown files should use `[[wikilinks]]` when linking to other local pages.
 
@@ -270,6 +296,15 @@ Only include discovery URLs that are likely to produce useful public results.
 
 Aim for 4-8 discovery URLs in the first pass, not 20.
 
+When selecting discovery and reading targets, prefer sources that improve understanding, not just coverage:
+
+- canonical or foundational sources
+- implementation anchors
+- benchmark or comparison sources
+- one or two strong explainers that clarify the field
+
+Do not spend most of your budget on redundant summaries of the same idea.
+
 ## Step 3 — Run the discovery pass
 
 For each discovery URL, run TinyFish with a concrete extraction goal.
@@ -335,6 +370,10 @@ tinyfish agent run --sync --url "{TARGET_URL}" \
    - sourceType
    - shortSummary
    - keyFindings: up to 7 bullets
+   - whyItMatters
+   - foundationality: foundational|important|derivative|unclear
+   - approachOrSchool: the main approach, camp, or framing this source represents
+   - whatThisChanges: one line on how this source changes the reader's understanding
    - importantEntities: people, projects, libraries, datasets, papers, companies
    - importantLinks: up to 5 URLs mentioned or linked from the page
    - suggestedPages: page names this should contribute to, e.g. [\"repos\", \"papers\", \"docs\", \"articles\", \"benchmarks\"]
@@ -350,6 +389,9 @@ tinyfish agent run --sync --url "{TARGET_URL}" \
    - extract concepts, APIs, workflows, and caveats
    If this is a dataset or model page:
    - extract task, modality, schema if visible, and usage constraints
+   Also extract:
+   - what this source says that is actually important
+   - what this source does NOT resolve
    Return JSON only.
    Do not invent facts. If something is missing, say it is missing." \
   > /tmp/kb_read_{SAFE_NAME}.json &
@@ -401,7 +443,37 @@ For especially important claims in topic pages, you may add inline markers like:
 
 Use them sparingly. Do not turn every line into metadata noise.
 
-## Step 7 — Decide the page set
+## Step 7 — Build the synthesis layer
+
+Before deciding the final page set, synthesize the field as a field.
+
+You must identify:
+
+- the core mental model
+- the main approaches, camps, or architectural patterns
+- which sources are foundational
+- which sources are implementation-oriented
+- which sources are mostly derivative or explanatory
+- the biggest unresolved questions or disagreements
+- the best reading order for someone who wants real understanding
+
+If the topic is broad and source-rich, this synthesis should appear in:
+
+- `index.md`
+- and, when justified, one or more of:
+  - `landscape.md`
+  - `reading-order.md`
+  - `disagreements.md`
+  - `what-matters.md`
+
+Anti-summary rule:
+
+- do not let every page become "source A says X, source B says Y"
+- collapse repetition
+- explain what the repetition means
+- separate first-order ideas from derivative restatements
+
+## Step 8 — Decide the page set
 
 Create the optional pages based on the actual evidence you found.
 
@@ -416,7 +488,7 @@ If the topic does **not** have a category, skip that file.
 
 Do not create a research-shaped output for topics that are not research-shaped.
 
-## Step 8 — Write the knowledge base
+## Step 9 — Write the knowledge base
 
 Write clean markdown. Keep it skimmable and builder-friendly.
 
@@ -430,6 +502,9 @@ Use this pattern:
 ## Overview
 {2-4 paragraph overview}
 
+## Mental Model
+{Explain the topic so a smart builder can actually understand the structure of the space.}
+
 ## Pages
 - [[docs]]
 - [[repos]]
@@ -441,6 +516,11 @@ Use this pattern:
 
 ## Gaps
 - ...
+
+## Reading Order
+- {what to read first}
+- {what to read second}
+- {what to skip until later}
 
 ## Source Log
 - [[sources]]
@@ -463,6 +543,8 @@ Each optional page should:
 - organize findings under clear headings
 - include outbound `[[wikilinks]]` to sibling pages where relevant
 - include source links inline as standard markdown links
+- include a short section on why the page matters in the bigger picture
+- avoid repeating material that belongs more naturally in another page
 
 Example:
 
@@ -512,7 +594,7 @@ At minimum, store:
 
 Append a new run entry on each build or update.
 
-## Step 9 — Quality rules
+## Step 10 — Quality rules
 
 Always follow these rules:
 
@@ -526,6 +608,10 @@ Always follow these rules:
 - if a source is weak, say so explicitly
 - if you cannot access a page or it is thin, record that in `sources.md`
 - if the KB is being updated, do not destroy prior valid work just because new sources were added
+- the KB should teach the reader how to think about the topic, not just what links were visited
+- every major page should answer "why does this matter?" not only "what is this?"
+- if multiple sources restate the same point, compress them into one synthesized claim instead of duplicating summaries
+- include a reading path for the strongest or most foundational sources when the topic is broad
 
 ## Parallelism rule
 

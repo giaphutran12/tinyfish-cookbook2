@@ -10,6 +10,15 @@ Ask your coding agent things like:
 
 The agent uses TinyFish's web agent to visit public sources, extract the highest-signal information, and write a clean markdown vault with `[[wikilinks]]`.
 
+The goal is not just to summarize sources. The skill is meant to synthesize the field:
+
+- what the core mental model is
+- what actually matters
+- what the main approaches are
+- what is foundational vs derivative
+- what is still unresolved
+- what to read first if you want real understanding
+
 ## Input modes
 
 - **Topic only** — the agent starts from search and hub pages
@@ -50,6 +59,7 @@ Generated only when relevant:
 - Honest logging of every visited URL in `sources.md`
 - Honest audit trail with `FOUND`, `INFERRED`, `CONFLICTING`, and `MISSING`
 - Update mode for refreshing an existing KB with new sources
+- Stronger synthesis defaults so the KB feels like understanding, not just summaries
 
 ## Built for
 
